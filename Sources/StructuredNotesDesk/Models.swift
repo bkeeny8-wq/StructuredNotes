@@ -9,15 +9,6 @@
 
 import Foundation
 
-/// Single underliers; baskets are built by adding these one at a time.
-public enum AssetID: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case spx = "SPX", ndx = "NDX", rty = "RTY"
-    case nvda = "NVDA", amzn = "AMZN", msft = "MSFT"
-    case aapl = "AAPL", googl = "GOOGL", tsla = "TSLA", avgo = "AVGO"
-    case qqq = "QQQ", spy = "SPY"
-    public var id: String { rawValue }
-}
-
 public enum BasketStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     case worstOf = "Worst-of"
     case weighted = "Weighted basket"
@@ -58,6 +49,15 @@ public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .european: return 0
         }
     }
+}
+
+/// Contingent-coupon barrier observation: standard payment-date check, or
+/// daily monitoring where any breach during the period kills that coupon
+/// (approximated at the simulation grid).
+public enum BarrierObsStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
+    case onPaymentDate = "On payment date"
+    case dailyMonitored = "Daily (approx.)"
+    public var id: String { rawValue }
 }
 
 public enum CallObs: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -106,7 +106,7 @@ public enum UpsideKind: String, CaseIterable, Identifiable, Hashable, Sendable {
 
 public struct Instrument: Hashable, Sendable {
     // underlying: build the basket by adding members (1–4)
-    public var members: [AssetID]
+    public var members: [String]     // catalog tickers
     public var basket: BasketStyle
     public var weights: [Double]            // parallel to members; normalized in the engine
     public var correlation: Double
@@ -118,6 +118,7 @@ public struct Instrument: Hashable, Sendable {
     public var couponRate: Double           // an input, like everything else
     public var couponObs: CouponObs
     public var couponBarrier: Double
+    public var couponBarrierObs: BarrierObsStyle
     public var memory: Bool
     // callability block
     public var call: CallFeature
@@ -126,6 +127,9 @@ public struct Instrument: Hashable, Sendable {
     public var triggerStep: Double          // step-down per year after the non-call period
     public var nonCallMonths: Double        // monthly slider
     public var snowball: Bool               // coupons accrue and pay at call
+    public var snowballRate: Double         // the accrual rate is its own input
+    public var lockIn: Bool                 // Memorizer: touch the lock level → par locks
+    public var lockLevel: Double
     // upside block
     public var upside: UpsideKind
     public var participation: Double
@@ -136,6 +140,8 @@ public struct Instrument: Hashable, Sendable {
     public var protection: Double
     public var gearedBuffer: Bool
     public var minRedemption: Double        // 0 = off
+    public var secondChance: Bool           // Elite: a monitored knock is forgiven if the
+    public var secondChanceLevel: Double    // final level recovers to at least this
     public var protObs: ProtectionObs
     // economics
     public var fundingSpread: Double
@@ -144,79 +150,49 @@ public struct Instrument: Hashable, Sendable {
     public var nonCallYears: Double { nonCallMonths / 12.0 }
 
     public init(
-        members: [AssetID],
-        basket: BasketStyle,
-        weights: [Double],
-        correlation: Double,
-        termYears: Double,
-        averaging: FinalAveraging,
-        coupon: CouponStyle,
-        couponRate: Double,
-        couponObs: CouponObs,
-        couponBarrier: Double,
-        memory: Bool,
-        call: CallFeature,
-        callObs: CallObs,
-        callTrigger: Double,
-        triggerStep: Double,
-        nonCallMonths: Double,
-        snowball: Bool,
-        upside: UpsideKind,
-        participation: Double,
-        cap: Double?,
-        digital: Double,
-        downside: DownsideKind,
-        protection: Double,
-        gearedBuffer: Bool,
-        minRedemption: Double,
-        protObs: ProtectionObs,
-        fundingSpread: Double,
-        volShift: Double
+        members: [String], basket: BasketStyle, weights: [Double], correlation: Double,
+        termYears: Double, averaging: FinalAveraging,
+        coupon: CouponStyle, couponRate: Double, couponObs: CouponObs,
+        couponBarrier: Double, couponBarrierObs: BarrierObsStyle, memory: Bool,
+        call: CallFeature, callObs: CallObs, callTrigger: Double, triggerStep: Double,
+        nonCallMonths: Double, snowball: Bool, snowballRate: Double,
+        lockIn: Bool, lockLevel: Double,
+        upside: UpsideKind, participation: Double, cap: Double?, digital: Double,
+        downside: DownsideKind, protection: Double, gearedBuffer: Bool,
+        minRedemption: Double, secondChance: Bool, secondChanceLevel: Double,
+        protObs: ProtectionObs, fundingSpread: Double, volShift: Double
     ) {
-        self.members = members
-        self.basket = basket
-        self.weights = weights
-        self.correlation = correlation
-        self.termYears = termYears
-        self.averaging = averaging
-        self.coupon = coupon
-        self.couponRate = couponRate
-        self.couponObs = couponObs
-        self.couponBarrier = couponBarrier
-        self.memory = memory
-        self.call = call
-        self.callObs = callObs
-        self.callTrigger = callTrigger
-        self.triggerStep = triggerStep
-        self.nonCallMonths = nonCallMonths
-        self.snowball = snowball
-        self.upside = upside
-        self.participation = participation
-        self.cap = cap
-        self.digital = digital
-        self.downside = downside
-        self.protection = protection
-        self.gearedBuffer = gearedBuffer
-        self.minRedemption = minRedemption
-        self.protObs = protObs
-        self.fundingSpread = fundingSpread
-        self.volShift = volShift
+        self.members = members; self.basket = basket; self.weights = weights; self.correlation = correlation
+        self.termYears = termYears; self.averaging = averaging
+        self.coupon = coupon; self.couponRate = couponRate; self.couponObs = couponObs
+        self.couponBarrier = couponBarrier; self.couponBarrierObs = couponBarrierObs; self.memory = memory
+        self.call = call; self.callObs = callObs; self.callTrigger = callTrigger; self.triggerStep = triggerStep
+        self.nonCallMonths = nonCallMonths; self.snowball = snowball; self.snowballRate = snowballRate
+        self.lockIn = lockIn; self.lockLevel = lockLevel
+        self.upside = upside; self.participation = participation; self.cap = cap; self.digital = digital
+        self.downside = downside; self.protection = protection; self.gearedBuffer = gearedBuffer
+        self.minRedemption = minRedemption; self.secondChance = secondChance; self.secondChanceLevel = secondChanceLevel
+        self.protObs = protObs; self.fundingSpread = fundingSpread; self.volShift = volShift
     }
+
 }
 
 extension Instrument {
-    /// Default build on launch: the tape-flagship phoenix shape at the tape's
-    /// median 11.8% coupon — priced, not solved.
+    /// From-scratch start: a bare funding note — single underlier, no coupon,
+    /// no call, no upside, full protection. Every section is a toggle; the
+    /// values below are the defaults each section reveals when switched on.
     public static let initial = Instrument(
-        members: [.spx, .ndx, .rty], basket: .worstOf,
+        members: ["SPX"], basket: .worstOf,
         weights: [1, 1, 1, 1], correlation: 0.75,
         termYears: 3, averaging: .none,
-        coupon: .contingent, couponRate: 0.118, couponObs: .quarterly,
-        couponBarrier: 0.70, memory: false,
-        call: .autocall, callObs: .quarterly, callTrigger: 1.0,
-        triggerStep: 0, nonCallMonths: 6, snowball: false,
+        coupon: .none, couponRate: 0.10, couponObs: .quarterly,
+        couponBarrier: 0.70, couponBarrierObs: .onPaymentDate, memory: false,
+        call: .none, callObs: .quarterly, callTrigger: 1.0,
+        triggerStep: 0, nonCallMonths: 6, snowball: false, snowballRate: 0.08,
+        lockIn: false, lockLevel: 0.90,
         upside: .none, participation: 1.0, cap: nil, digital: 0.30,
-        downside: .kiPut, protection: 0.60, gearedBuffer: false,
-        minRedemption: 0, protObs: .european,
+        downside: .par, protection: 0.60, gearedBuffer: false,
+        minRedemption: 0, secondChance: false, secondChanceLevel: 0.60,
+        protObs: .european,
         fundingSpread: 0.005, volShift: 0)
 }

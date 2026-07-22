@@ -71,7 +71,7 @@ public struct DeskView: View {
                         }
                     } label: {
                         HStack(spacing: 4) {
-                            Text(m.rawValue).font(.system(size: 12.5, weight: .semibold))
+                            Text(m).font(.system(size: 12.5, weight: .semibold))
                             if spec.members.count > 1 {
                                 Image(systemName: "xmark").font(.system(size: 9, weight: .bold))
                             }
@@ -83,27 +83,14 @@ public struct DeskView: View {
                     .buttonStyle(.plain)
                 }
                 if spec.members.count < Engine.maxAssets {
-                    Menu {
-                        ForEach(AssetID.allCases.filter { !spec.members.contains($0) }) { a in
-                            Button(Market.asset(a).name + " (" + a.rawValue + ")") {
-                                mutate { $0.members.append(a) }
-                            }
-                        }
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus").font(.system(size: 10, weight: .bold))
-                            Text("Add").font(.system(size: 12.5, weight: .semibold))
-                        }
-                        .padding(.horizontal, 10).padding(.vertical, 7)
-                        .background(Color.white, in: Capsule())
-                        .overlay(Capsule().stroke(Theme.rule))
-                        .foregroundStyle(Theme.ink)
-                    }
+                    addMenu(title: "Index/ETF", list: Market.indexETF)
+                    addMenu(title: "Stock", list: Market.stocks)
                 }
             }
             ForEach(spec.members, id: \.self) { m in
                 let a = Market.asset(m)
-                Text("\(a.ticker) \(a.spot < 1000 ? String(format: "%.2f", a.spot) : Fmt.usd0(a.spot)) · σ \(Fmt.pct(a.vol)) · q \(Fmt.pct(a.div, 2))")
+                let px = a.spot == 0 ? "—" : (a.spot < 1000 ? String(format: "%.2f", a.spot) : Fmt.usd0(a.spot))
+                Text("\(a.ticker) \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? "" : " est") · q \(Fmt.pct(a.div, 2)) · \(a.tapeCount) tape prints")
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
             }
             if spec.members.count > 1 {
@@ -111,13 +98,12 @@ public struct DeskView: View {
                             selection: spec.basket) { k in mutate { $0.basket = k } }
                 if spec.basket == .weighted {
                     ForEach(Array(spec.members.enumerated()), id: \.element) { i, m in
-                        LeverRow(label: "Weight \(m.rawValue)",
-                                 display: String(format: "%.2f", spec.weights[safe: i] ?? 1),
-                                 value: Binding(get: { spec.weights[safe: i] ?? 1 },
-                                                set: { if i < spec.weights.count { spec.weights[i] = $0 } }),
-                                 range: 0.05...1, step: 0.05)
+                        LeverRow(label: "Weight \(m)",
+                                 display: Fmt.pct(share(i), 0),
+                                 value: shareBinding(i),
+                                 range: 0.05...0.90, step: 0.01)
                     }
-                    Text("Weights normalize in the engine.")
+                    Text("Shares rebalance to sum to 100%.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 LeverRow(label: "Pairwise correlation ρ", display: String(format: "%.2f", spec.correlation),
@@ -132,24 +118,31 @@ public struct DeskView: View {
                      value: Binding(get: { spec.termYears * 12 },
                                     set: { spec.termYears = $0 / 12 }),
                      range: 1...84, step: 1)
-            Picker("Final valuation", selection: $spec.averaging) {
-                ForEach(FinalAveraging.allCases) { o in Text(o.rawValue).tag(o) }
+            ChipToggle(label: "Asian tail on final valuation", on: spec.averaging != .none) {
+                mutate { s in s.averaging = s.averaging == .none ? .lastMonth : .none }
             }
-            .pickerStyle(.menu).tint(Theme.ink)
+            if spec.averaging != .none {
+                ChoiceChips(options: [(FinalAveraging.lastWeek, "Last week (5d)"), (.lastMonth, "Last month (21d)")],
+                            selection: spec.averaging) { k in mutate { $0.averaging = k } }
+            }
         }
     }
 
     private var couponBlock: some View {
-        Card(title: "Coupon") {
-            ChoiceChips(options: CouponStyle.allCases.map { ($0, $0 == .none ? "None" : $0.rawValue) },
+        BlockCard(title: "Coupon",
+                  on: spec.coupon != .none,
+                  toggle: { mutate { s in
+                      s.coupon = s.coupon == .none ? .contingent : .none
+                  } },
+                  offHint: "Off — no coupon leg. Toggle to add income.") {
+            ChoiceChips(options: [(CouponStyle.guaranteed, "Guaranteed"), (.contingent, "Contingent")],
                         selection: spec.coupon) { k in
                 mutate { s in
                     s.coupon = k
                     if k != .contingent { s.memory = false }
-                    if k == .none { s.snowball = false }
                 }
             }
-            if spec.coupon != .none {
+            Group {
                 LeverRow(label: "Coupon rate", display: Fmt.pct(spec.couponRate),
                          value: $spec.couponRate, range: 0...0.25, step: 0.001)
                 Picker("Coupon observations", selection: $spec.couponObs) {
@@ -162,6 +155,14 @@ public struct DeskView: View {
                 if spec.coupon == .contingent {
                     LeverRow(label: "Coupon barrier", display: Fmt.pct(spec.couponBarrier, 0),
                              value: $spec.couponBarrier, range: 0.4...1.0, step: 0.01)
+                    if spec.couponObs != .daily && spec.couponObs != .european {
+                        ChoiceChips(options: BarrierObsStyle.allCases.map { ($0, "Obs: " + $0.rawValue.lowercased()) },
+                                    selection: spec.couponBarrierObs) { k in mutate { $0.couponBarrierObs = k } }
+                        if spec.couponBarrierObs == .dailyMonitored {
+                            Text("Any breach during the period kills that coupon — approximated at the simulation grid.")
+                                .font(.system(size: 10)).foregroundStyle(.secondary)
+                        }
+                    }
                     if spec.couponObs != .daily && spec.couponObs != .european && !spec.snowball {
                         ChipToggle(label: "Memory", on: spec.memory) { mutate { $0.memory.toggle() } }
                     }
@@ -175,15 +176,17 @@ public struct DeskView: View {
     }
 
     private var callBlock: some View {
-        Card(title: "Callability") {
-            ChoiceChips(options: CallFeature.allCases.map { ($0, $0.rawValue) },
+        BlockCard(title: "Callability",
+                  on: spec.call != .none,
+                  toggle: { mutate { s in
+                      s.call = s.call == .none ? .autocall : .none
+                  } },
+                  offHint: "Off — bullet, runs to maturity.") {
+            ChoiceChips(options: [(CallFeature.autocall, "Autocall"), (.issuerCall, "Issuer call")],
                         selection: spec.call) { k in
-                mutate { s in
-                    s.call = k
-                    if k == .none { s.snowball = false }
-                }
+                mutate { $0.call = k }
             }
-            if spec.call != .none {
+            Group {
                 Picker("Call observations", selection: $spec.callObs) {
                     ForEach(CallObs.allCases) { o in Text(o.rawValue).tag(o) }
                 }
@@ -199,6 +202,19 @@ public struct DeskView: View {
                     ChipToggle(label: "Snowball: coupons accrue to call", on: spec.snowball) {
                         mutate { s in s.snowball.toggle(); if s.snowball { s.memory = false } }
                     }
+                    if spec.snowball {
+                        LeverRow(label: "Snowball rate (p.a.)", display: Fmt.pct(spec.snowballRate),
+                                 value: $spec.snowballRate, range: 0...0.25, step: 0.0025)
+                    }
+                }
+                ChipToggle(label: "Lock-in (Memorizer)", on: spec.lockIn) {
+                    mutate { $0.lockIn.toggle() }
+                }
+                if spec.lockIn {
+                    LeverRow(label: "Lock level", display: Fmt.pct(spec.lockLevel, 0),
+                             value: $spec.lockLevel, range: 0.6...1.05, step: 0.01)
+                    Text("Touch the lock level on an observation and par redemption locks for good.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 if spec.call == .issuerCall {
                     Text("Rule-based issuer call — holder value shown is an upper bound (LSMC optimal exercise is worth less to the holder).")
@@ -209,8 +225,13 @@ public struct DeskView: View {
     }
 
     private var upsideBlock: some View {
-        Card(title: "Upside at maturity") {
-            ChoiceChips(options: [(UpsideKind.none, "None"), (.linear, "Linear"), (.absolute, "Absolute")],
+        BlockCard(title: "Upside at maturity",
+                  on: spec.upside != .none,
+                  toggle: { mutate { s in
+                      s.upside = s.upside == .none ? .linear : .none
+                  } },
+                  offHint: "Off — no participation leg.") {
+            ChoiceChips(options: [(UpsideKind.linear, "Linear"), (.absolute, "Absolute")],
                         selection: spec.upside) { k in mutate { $0.upside = k } }
             ChoiceChips(options: [(UpsideKind.digital, "Digital"), (.digitalPlus, "Digi-plus")],
                         selection: spec.upside) { k in mutate { $0.upside = k } }
@@ -234,10 +255,15 @@ public struct DeskView: View {
     }
 
     private var downsideBlock: some View {
-        Card(title: "Downside at maturity") {
-            ChoiceChips(options: DownsideKind.allCases.map { ($0, $0 == .par ? "Par" : $0 == .buffer ? "Buffer" : "KI put") },
+        BlockCard(title: "Downside at maturity",
+                  on: spec.downside != .par,
+                  toggle: { mutate { s in
+                      s.downside = s.downside == .par ? .kiPut : .par
+                  } },
+                  offHint: "Full protection (par floor). Toggle to sell downside.") {
+            ChoiceChips(options: [(DownsideKind.buffer, "Buffer"), (.kiPut, "KI put")],
                         selection: spec.downside) { k in mutate { $0.downside = k } }
-            if spec.downside != .par {
+            Group {
                 LeverRow(label: spec.downside == .buffer ? "Buffer strike" : "KI barrier",
                          display: Fmt.pct(spec.protection, 0),
                          value: $spec.protection, range: 0.4...0.95, step: 0.01)
@@ -251,6 +277,15 @@ public struct DeskView: View {
                         ForEach(ProtectionObs.allCases) { o in Text(o.rawValue).tag(o) }
                     }
                     .pickerStyle(.menu).tint(Theme.ink)
+                    ChipToggle(label: "Second chance (Elite)", on: spec.secondChance) {
+                        mutate { $0.secondChance.toggle() }
+                    }
+                    if spec.secondChance {
+                        LeverRow(label: "Second-chance level", display: Fmt.pct(spec.secondChanceLevel, 0),
+                                 value: $spec.secondChanceLevel, range: 0.3...0.9, step: 0.01)
+                        Text("A monitored knock is forgiven if the final level recovers to at least this. Pair with a monitored barrier.")
+                            .font(.system(size: 10)).foregroundStyle(.secondary)
+                    }
                 }
                 LeverRow(label: "Min redemption floor", display: spec.minRedemption == 0 ? "off" : Fmt.pct(spec.minRedemption, 0),
                          value: $spec.minRedemption, range: 0...0.95, step: 0.05)
@@ -270,10 +305,57 @@ public struct DeskView: View {
         }
     }
 
+    private func addMenu(title: String, list: [Asset]) -> some View {
+        Menu {
+            ForEach(list.filter { !spec.members.contains($0.ticker) }, id: \.ticker) { a in
+                Button("\(a.ticker) — \(a.name)") {
+                    mutate { $0.members.append(a.ticker) }
+                }
+            }
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "plus").font(.system(size: 10, weight: .bold))
+                Text(title).font(.system(size: 12.5, weight: .semibold))
+            }
+            .padding(.horizontal, 10).padding(.vertical, 7)
+            .background(Color.white, in: Capsule())
+            .overlay(Capsule().stroke(Theme.rule))
+            .foregroundStyle(Theme.ink)
+        }
+    }
+
+    private func share(_ i: Int) -> Double {
+        let n = spec.members.count
+        let total = (0..<n).reduce(0.0) { $0 + (spec.weights[safe: $1] ?? 1) }
+        guard total > 0, let w = spec.weights[safe: i] else { return 1.0 / Double(max(n, 1)) }
+        return w / total
+    }
+
+    private func shareBinding(_ i: Int) -> Binding<Double> {
+        Binding(
+            get: { share(i) },
+            set: { v in
+                let n = spec.members.count
+                guard i < n else { return }
+                var s = (0..<n).map { share($0) }
+                let others = 1 - s[i]
+                let scale = others > 1e-6 ? (1 - v) / others : 0
+                for j in 0..<n where j != i { s[j] = others > 1e-6 ? s[j] * scale : (1 - v) / Double(max(n - 1, 1)) }
+                s[i] = v
+                for j in 0..<n where j < spec.weights.count { spec.weights[j] = s[j] }
+            })
+    }
+
     private func mutate(_ f: (inout Instrument) -> Void) {
         var s = spec
+        let beforeMembers = s.members
+        let beforeBasket = s.basket
         f(&s)
-        if s.members.isEmpty { s.members = [.spx] }
+        if s.members.isEmpty { s.members = ["SPX"] }
+        if s.basket == .weighted, s.members != beforeMembers || beforeBasket != .weighted {
+            let n = Double(s.members.count)
+            for j in 0..<s.weights.count { s.weights[j] = 1.0 / n }
+        }
         if s.coupon == .none { s.memory = false; s.snowball = false }
         if s.call == .none { s.snowball = false }
         if s.snowball { s.memory = false }
@@ -309,7 +391,8 @@ public struct DeskView: View {
                     .foregroundStyle(Theme.bond)
                 if pricing { ProgressView().controlSize(.small) }
                 if let r = result {
-                    Text("issue at par ⇒ embedded fee \(Fmt.pct(max(1 - r.value, 0)))")
+                    let dlt = (r.value - 1) * 100
+                    Text(String(format: "vs par: %+.2f pts", dlt) + (dlt < 0 ? " — room for fees/margin at par issue" : " — rich to par; restructure"))
                         .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
                 }
             }
@@ -319,14 +402,15 @@ public struct DeskView: View {
     }
 
     private var configSummary: String {
-        let names = spec.members.map(\.rawValue).joined(separator: "/")
+        let names = spec.members.joined(separator: "/")
         var parts = ["\(names)\(spec.members.count > 1 ? " (\(spec.basket.rawValue.lowercased()))" : ""), \(termStr(spec.termYears))"]
         if spec.averaging != .none { parts.append("\(spec.averaging.fixings)-fixing Asian tail") }
         if spec.coupon != .none {
             var cpn = "\(Fmt.pct(spec.couponRate)) \(spec.coupon == .guaranteed ? "guaranteed" : "contingent @ \(Fmt.pct(spec.couponBarrier, 0))")"
             cpn += " (\(spec.couponObs.rawValue.lowercased()))"
             if spec.memory { cpn += " memory" }
-            if spec.snowball { cpn += ", snowball" }
+            if spec.snowball { cpn += ", snowball \(Fmt.pct(spec.snowballRate))" }
+            if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", daily-obs" }
             parts.append(cpn)
         }
         if spec.call != .none {
@@ -343,6 +427,8 @@ public struct DeskView: View {
         case .buffer: parts.append("\(spec.gearedBuffer ? "geared " : "")buffer \(Fmt.pct(spec.protection, 0))")
         case .kiPut: parts.append("KI \(Fmt.pct(spec.protection, 0)) \(spec.protObs == .european ? "European" : spec.protObs.rawValue.lowercased())")
         }
+        if spec.secondChance && spec.downside == .kiPut { parts.append("2nd-chance ≥\(Fmt.pct(spec.secondChanceLevel, 0))") }
+        if spec.lockIn { parts.append("lock-in ≥\(Fmt.pct(spec.lockLevel, 0))") }
         if spec.minRedemption > 0 { parts.append("floored \(Fmt.pct(spec.minRedemption, 0))") }
         return parts.joined(separator: " · ") + "."
     }
@@ -431,7 +517,8 @@ public struct DeskView: View {
         }
         if spec.coupon != .none {
             out.append("Q = E[Σ df at paid dates] = \(String(format: "%.3f", r.qFactor))")
-            out.append("coupon leg = c·Q = \(Fmt.pct(spec.couponRate))·\(String(format: "%.3f", r.qFactor)) = \(Fmt.usd0(r.couponLeg * notional))")
+            let rate = spec.snowball ? spec.snowballRate : spec.couponRate
+            out.append("coupon leg = \(spec.snowball ? "r_sb" : "c")·Q = \(Fmt.pct(rate))·\(String(format: "%.3f", r.qFactor)) = \(Fmt.usd0(r.couponLeg * notional))")
         }
         if spec.upside != .none {
             if (spec.upside == .linear || spec.upside == .absolute), r.upUnit > 1e-9 {
@@ -441,7 +528,7 @@ public struct DeskView: View {
             }
         }
         out.append("value = par + cpn + up − down = \(Fmt.pct(r.value, 2)) of par")
-        out.append("issue at par ⇒ embedded fee = 1 − value = \(Fmt.pct(max(1 - r.value, 0), 2))")
+        out.append(String(format: "value − par = %+.2f pts of par", (r.value - 1) * 100))
         return out
     }
 
@@ -559,7 +646,16 @@ public struct DeskView: View {
             lines.append("Short a digital ladder at \(Fmt.pct(spec.couponBarrier, 0)) — pin risk on each \(spec.couponObs.rawValue.lowercased()) observation\(spec.memory ? "; memory chains the digitals" : "").")
         }
         if spec.snowball {
-            lines.append("Snowball concentrates the coupon into the call date — one large digital instead of a strip.")
+            lines.append("Snowball at \(Fmt.pct(spec.snowballRate)) concentrates the coupon into the call date — one large digital instead of a strip.")
+        }
+        if spec.coupon == .contingent && spec.couponBarrierObs == .dailyMonitored {
+            lines.append("Daily-observed coupon barrier turns the digital ladder one-touch — coupons are harder, and the same rate is worth less to the holder.")
+        }
+        if spec.lockIn {
+            lines.append("Lock-in at \(Fmt.pct(spec.lockLevel, 0)): one touch extinguishes the desk's long KI put — the put dies on a good print.")
+        }
+        if spec.secondChance && spec.downside == .kiPut {
+            lines.append("Second chance pulls the American knock back toward European — the desk's put cheapens and the note richens.")
         }
         if spec.call != .none {
             lines.append("Negative gamma just under the \(Fmt.pct(spec.callTrigger, 0)) trigger into \(spec.callObs.rawValue.lowercased()) observations — calling extinguishes coupon-rich states.")

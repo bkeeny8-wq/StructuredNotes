@@ -130,9 +130,10 @@ public enum Engine {
     }
 
     /// Maturity payoff on the final performance z, split into upside and loss.
-    public static func components(perf z: Double, knocked: Bool, s: Instrument) -> (up: Double, loss: Double) {
+    public static func components(perf z: Double, knocked: Bool, locked: Bool = false, s: Instrument) -> (up: Double, loss: Double) {
         let capV = s.cap ?? 1e9
-        let alive = s.downside == .kiPut ? !knocked : (s.downside == .par || z >= s.protection)
+        let alive = locked ? true
+            : (s.downside == .kiPut ? !knocked : (s.downside == .par || z >= s.protection))
         var up = 0.0
         switch s.upside {
         case .none: up = 0
@@ -145,7 +146,7 @@ public enum Engine {
             else if alive { up = s.participation * (1 - z) }
         }
         var loss = 0.0
-        switch s.downside {
+        switch locked ? DownsideKind.par : s.downside {
         case .par: loss = 0
         case .buffer:
             let gear = s.gearedBuffer ? 1.0 / s.protection : 1.0
@@ -180,8 +181,10 @@ public enum Engine {
         let callPerYear = callActive ? s.callObs.perYear : 0
         let protPerYear = s.protObs.perYear
         let fixings = s.averaging.fixings
+        let dailyBarrier = s.coupon == .contingent && s.couponBarrierObs == .dailyMonitored
+            && s.couponObs != .daily && s.couponObs != .european
         let stepsPerYear = max(couponActive ? cpnPerYear : 0, callPerYear, protPerYear,
-                               fixings > 0 ? 12 : 0, 1)
+                               fixings > 0 ? 12 : 0, dailyBarrier ? 12 : 0, 1)
         let nSteps = max(1, Int((s.termYears * Double(stepsPerYear)).rounded()))
         let dt = s.termYears / Double(nSteps)
         let sqdt = dt.squareRoot()
@@ -210,6 +213,8 @@ public enum Engine {
             var x = [Double](repeating: spotScale, count: nA)
             var missed = 0
             var knocked = false
+            var periodClean = true
+            var locked = false
             var cpv = 0.0, parpv = 0.0, uppv = 0.0, losspv = 0.0
             var qacc = 0.0, uacc = 0.0
             let base = pth * maxSlotsPerPath * nA
@@ -252,17 +257,27 @@ public enum Engine {
                 let df = exp(-rf * t)
 
                 if isProtDate && zNow < s.protection { knocked = true }
+                if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
+                if s.lockIn && zNow >= s.lockLevel {
+                    let lockObs = (callActive && i % callEvery == 0)
+                        || (couponActive && i % couponEvery == 0)
+                        || (!callActive && !couponActive) || isFinal
+                    if lockObs { locked = true }
+                }
 
                 if isCouponDate && !s.snowball {
+                    let condition = dailyBarrier ? (periodClean && zNow >= s.couponBarrier)
+                                                 : (zNow >= s.couponBarrier)
                     if s.coupon == .guaranteed {
                         cpv += perEventAmt * df; qacc += perEventQ * df; out.coupons += 1
-                    } else if zNow >= s.couponBarrier {
+                    } else if condition {
                         let canMemory = s.memory && s.couponObs != .daily && s.couponObs != .european
                         let n = 1 + (canMemory ? missed : 0)
                         cpv += Double(n) * perEventAmt * df
                         qacc += Double(n) * perEventQ * df
                         out.coupons += Double(n); missed = 0
                     } else { missed += 1 }
+                    periodClean = true
                 }
                 if isFinal, couponActive, s.couponObs == .european, !s.snowball {
                     let pays = s.coupon == .guaranteed || zNow >= s.couponBarrier
@@ -274,7 +289,7 @@ public enum Engine {
                     if zNow >= trig {
                         parpv += df
                         if couponActive && s.snowball {
-                            cpv += c * t * df; qacc += t * df; out.coupons += 1
+                            cpv += s.snowballRate * t * df; qacc += t * df; out.coupons += 1
                         }
                         out.called += 1; out.life += t
                         break
@@ -284,15 +299,18 @@ public enum Engine {
                 if isFinal {
                     if couponActive && s.snowball {
                         let pays = s.coupon == .guaranteed || zNow >= s.couponBarrier
-                        if pays { cpv += c * t * df; qacc += t * df; out.coupons += 1 }
+                        if pays { cpv += s.snowballRate * t * df; qacc += t * df; out.coupons += 1 }
                     }
-                    let (up, loss) = components(perf: zNow, knocked: knocked, s: s)
+                    if s.downside == .kiPut, knocked, s.secondChance, zNow >= s.secondChanceLevel {
+                        knocked = false
+                    }
+                    let (up, loss) = components(perf: zNow, knocked: knocked, locked: locked, s: s)
                     parpv += df; uppv += up * df; losspv += loss * df
                     if (s.upside == .linear || s.upside == .absolute), s.participation > 1e-9 {
                         uacc += up * df / s.participation
                     }
                     out.life += t
-                    let lost = s.downside == .buffer ? zNow < s.protection : (s.downside == .kiPut && knocked)
+                    let lost = !locked && (s.downside == .buffer ? zNow < s.protection : (s.downside == .kiPut && knocked))
                     if lost { out.loss += 1 }
                 }
             }
@@ -349,11 +367,13 @@ public enum Engine {
     public static func featureLedger(_ s: Instrument) -> [LedgerRow] {
         var stages: [(String, Instrument)] = []
         var b = s
-        b.members = [s.members.first ?? .spx]
+        b.members = [s.members.first ?? "SPX"]
         b.basket = .worstOf
         b.downside = .par; b.gearedBuffer = false; b.minRedemption = 0
         b.protObs = .european; b.averaging = .none
         b.call = .none; b.memory = false; b.snowball = false; b.triggerStep = 0
+        b.couponBarrierObs = .onPaymentDate
+        b.secondChance = false; b.lockIn = false
         b.upside = .none
         if b.coupon == .contingent { b.coupon = .guaranteed }
         let baseName = s.coupon == .none
@@ -379,6 +399,11 @@ public enum Engine {
         if s.downside == .kiPut && s.protObs != .european {
             add("+ monitored barrier (\(s.protObs == .monthly ? "monthly" : "quarterly"))") { $0.protObs = s.protObs }
         }
+        if s.downside == .kiPut && s.secondChance {
+            add("+ second chance ≥\(Int(s.secondChanceLevel * 100))% (Elite)") {
+                $0.secondChance = true; $0.secondChanceLevel = s.secondChanceLevel
+            }
+        }
         if s.members.count > 1 {
             add("+ \(s.basket == .worstOf ? "worst-of" : "weighted") basket ×\(s.members.count) (ρ \(String(format: "%.2f", s.correlation)))") {
                 $0.members = s.members; $0.basket = s.basket; $0.weights = s.weights
@@ -398,6 +423,9 @@ public enum Engine {
                 $0.coupon = .contingent; $0.couponBarrier = s.couponBarrier
             }
         }
+        if s.coupon == .contingent && s.couponBarrierObs == .dailyMonitored {
+            add("+ daily-observed barrier") { $0.couponBarrierObs = .dailyMonitored }
+        }
         if s.memory {
             add("+ memory") { $0.memory = true }
         }
@@ -411,7 +439,14 @@ public enum Engine {
             add("+ step-down trigger (−\(Int(s.triggerStep * 100))%/yr)") { $0.triggerStep = s.triggerStep }
         }
         if s.snowball && s.coupon != .none && s.call != .none {
-            add("+ snowball accrual (pay at call)") { $0.snowball = true }
+            add("+ snowball \(String(format: "%.1f", s.snowballRate * 100))% accrual (pay at call)") {
+                $0.snowball = true; $0.snowballRate = s.snowballRate
+            }
+        }
+        if s.lockIn {
+            add("+ lock-in ≥\(Int(s.lockLevel * 100))% (Memorizer)") {
+                $0.lockIn = true; $0.lockLevel = s.lockLevel
+            }
         }
         return stages.map { (label, st) in
             LedgerRow(label: label, value: simulate(st, paths: fastPaths).pv)

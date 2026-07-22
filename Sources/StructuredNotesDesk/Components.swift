@@ -174,3 +174,33 @@ struct LegRow: View {
         .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
     }
 }
+
+/// A builder section with an on/off switch in the header. Off shows a hint;
+/// on reveals the section's features.
+struct BlockCard<Content: View>: View {
+    let title: String
+    let on: Bool
+    let toggle: () -> Void
+    var offHint: String = "Off"
+    @ViewBuilder var content: Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(title).font(.system(.headline, design: .serif)).foregroundStyle(Theme.ink)
+                Spacer()
+                Toggle("", isOn: Binding(get: { on }, set: { _ in toggle() }))
+                    .labelsHidden()
+                    .tint(Theme.bond)
+            }
+            if on {
+                content
+            } else {
+                Text(offHint).font(.system(size: 11)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(14)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.rule))
+    }
+}
