@@ -15,6 +15,7 @@ public struct DeskView: View {
     @State private var sens: Sensitivities?
     @State private var ladder: [LadderRow] = []
     @State private var ledger: [LedgerRow] = []
+    @State private var charges: ChargeStack?
     @State private var pricing = false
 
     private let notional = 1000.0
@@ -56,6 +57,32 @@ public struct DeskView: View {
             upsideBlock
             downsideBlock
             economicsBlock
+            chargesBlock
+        }
+    }
+
+    private var chargesBlock: some View {
+        BlockCard(title: "Charges & reserves",
+                  on: spec.chargesOn,
+                  toggle: { mutate { $0.chargesOn.toggle() } },
+                  offHint: "Off — quoting model mid. Toggle for the dealer offer.") {
+            LeverRow(label: "Skew (vol pts per 10% moneyness)",
+                     display: String(format: "%.1fv", spec.skewSlope * 100),
+                     value: $spec.skewSlope, range: 0...0.025, step: 0.0025)
+            LeverRow(label: "Overhedge barrier shift",
+                     display: Fmt.pct(spec.barrierShift),
+                     value: $spec.barrierShift, range: 0...0.03, step: 0.0025)
+            LeverRow(label: "Correlation bid-ask (±ρ)",
+                     display: String(format: "±%.2f", spec.corrBA),
+                     value: $spec.corrBA, range: 0...0.08, step: 0.005)
+            LeverRow(label: "Vol bid-ask on |vega|",
+                     display: String(format: "%.1fv", spec.volBA * 100),
+                     value: $spec.volBA, range: 0...0.015, step: 0.001)
+            LeverRow(label: "Model / rebalancing reserve",
+                     display: String(format: "%.0fbp", spec.reserveBps),
+                     value: $spec.reserveBps, range: 0...50, step: 5)
+            Text("Flat-vol Monte Carlo is a mid. These are the desk's costs of being wrong: the KI wing, unreplicable digitals, unhedgeable correlation.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
 
@@ -373,6 +400,7 @@ public struct DeskView: View {
     private var workThrough: some View {
         VStack(spacing: 12) {
             valueCard
+            offerCard
             payoffCard
             decompositionCard
             workCard
@@ -398,6 +426,34 @@ public struct DeskView: View {
             }
             Text(configSummary)
                 .font(.system(size: 12)).foregroundStyle(.secondary)
+        }
+    }
+
+    @ViewBuilder
+    private var offerCard: some View {
+        if spec.chargesOn, let r = result {
+            Card(title: "Dealer offer build-up") {
+                LegRow(label: "Model mid (flat vol)", value: Fmt.pct(r.value, 2))
+                if let ch = charges {
+                    if ch.skew > 0.0002 { LegRow(label: "− skew: downside leg at strike vol", value: "−" + Fmt.pct(ch.skew, 2), color: Theme.loss) }
+                    if ch.overhedge > 0.0002 { LegRow(label: "− overhedge: barriers shifted \(Fmt.pct(spec.barrierShift))", value: "−" + Fmt.pct(ch.overhedge, 2), color: Theme.loss) }
+                    if ch.corrBA > 0.0002 { LegRow(label: "− correlation bid-ask ±\(String(format: "%.2f", spec.corrBA))", value: "−" + Fmt.pct(ch.corrBA, 2), color: Theme.loss) }
+                    if ch.vegaBA > 0.0002 { LegRow(label: "− vol bid-ask on |vega|", value: "−" + Fmt.pct(ch.vegaBA, 2), color: Theme.loss) }
+                    if ch.reserve > 0.0002 { LegRow(label: "− model / rebalancing reserve", value: "−" + Fmt.pct(ch.reserve, 2), color: Theme.fee) }
+                    HStack {
+                        Text("Dealer offer").font(.system(size: 14, weight: .bold))
+                        Spacer()
+                        Text(Fmt.pct(ch.offer, 2))
+                            .font(.system(size: 20, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Theme.bond)
+                    }
+                    .padding(.top, 4)
+                    Text("This is the number that becomes the term sheet's estimated value — the model mid less the desk's cost of hedging what it cannot replicate.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                } else {
+                    ProgressView("Building the charge stack…").font(.footnote)
+                }
+            }
         }
     }
 
@@ -680,6 +736,9 @@ public struct DeskView: View {
         if spec.minRedemption > 0 {
             lines.append("Redemption floored at \(Fmt.pct(spec.minRedemption, 0)): the desk is short a put spread rather than the full tail.")
         }
+        if spec.chargesOn {
+            lines.append("The offer is mid less the cost of being wrong: the KI wing (skew), unreplicable digitals (overhedge), and unhedgeable correlation — that gap is the estimated-value discount clients see on term sheets.")
+        }
         lines.append("Funding at UST + \(Fmt.bp(spec.fundingSpread)) discounts every flow — the funding DV is the issuer's edge on the shelf.")
         return lines
     }
@@ -689,7 +748,7 @@ public struct DeskView: View {
     private func reprice() {
         let snapshot = spec
         pricing = true
-        ladder = []; ledger = []
+        ladder = []; ledger = []; charges = nil
         Task.detached(priority: .userInitiated) {
             let r = Engine.price(snapshot)
             let g = Engine.sensitivities(snapshot)
@@ -697,10 +756,11 @@ public struct DeskView: View {
                 if snapshot == self.spec { self.result = r; self.sens = g }
                 self.pricing = false
             }
+            let ch = Engine.charges(snapshot, midValue: r.value, vega: g.vega)
             let lad = Engine.spotLadder(snapshot)
             let led = Engine.featureLedger(snapshot)
             await MainActor.run {
-                if snapshot == self.spec { self.ladder = lad; self.ledger = led }
+                if snapshot == self.spec { self.charges = ch; self.ladder = lad; self.ledger = led }
             }
         }
     }

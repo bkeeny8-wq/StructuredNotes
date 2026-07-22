@@ -1,6 +1,6 @@
-# Structured Notes — instrument builder (v8, always-price)
+# Structured Notes — instrument builder (v6, always-price)
 
-iPad SwiftUI **framework** for experienced users. Every dial is an input; the output is the note's **model value as a percentage of par**. No solving, no presets, no tabs — build the instrument, read the price, iterate the levers. The feature ledger reads in **points of par**: each row re-prices the build with one more feature, so the deltas are each feature's price directly.
+iPad SwiftUI app for experienced users. Every dial is an input; the output is the note's **model value as a percentage of par**. No solving, no presets, no tabs — build the instrument, read the price, iterate the levers. The feature ledger reads in **points of par**: each row re-prices the build with one more feature, so the deltas are each feature's price directly.
 
 ## Builder blocks
 
@@ -44,11 +44,6 @@ Indices ≈ Jul 20 2026 close: SPX 7,478 · NDX 28,604 · RTY 2,942 · UST 4.60%
 
 Funding-rate discounting · risk-neutral GBM, 4,000 paths (1,600 ladder/ledger), fixed seed, CRN — legs are exactly additive and the printed identity ties · up to 4 assets, equal pairwise ρ via Cholesky, weighted baskets normalize weights · monitored barriers check at observation dates · the Asian tail runs 21 daily sub-steps inside the final month and averages the last 5 or 21 fixings · daily coupon accrual is approximated at the simulation grid · **issuer call is rule-based, so the holder value shown is an upper bound** (optimal LSMC exercise is worth less to the holder) · flat vol, no skew — a vol surface is the highest-impact upgrade.
 
-## Xcode project
+## Files & Xcode
 
-Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample**.
-
-| Target | Type |
-|---|---|
-| `StructuredNotesDesk` | Framework — models, always-price engine, builder UI |
-| `StructuredNotesDeskExample` | Host app (`import StructuredNotesDesk` → `DeskView()`) |
+`StructuredNotesApp.swift` (iOS 17+, Charts) · `Models.swift` · `MarketData.swift` · `PricingEngine.swift` · `Components.swift` · `DeskView.swift`. New iOS App project → drop the six files in, delete `ContentView.swift`, Display Name "Structured Notes". Pair with the AppIcon deliverable.

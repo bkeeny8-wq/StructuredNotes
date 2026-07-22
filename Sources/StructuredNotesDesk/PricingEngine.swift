@@ -34,6 +34,21 @@ public struct PricingResult: Equatable, Sendable {
     }
 }
 
+public struct ChargeStack: Equatable, Sendable {
+    public var skew: Double
+    public var overhedge: Double
+    public var corrBA: Double
+    public var vegaBA: Double
+    public var reserve: Double
+    public var total: Double
+    public var offer: Double            // model mid − total, per $1 of par
+
+    public init(skew: Double, overhedge: Double, corrBA: Double, vegaBA: Double, reserve: Double, total: Double, offer: Double) {
+        self.skew = skew; self.overhedge = overhedge; self.corrBA = corrBA; self.vegaBA = vegaBA
+        self.reserve = reserve; self.total = total; self.offer = offer
+    }
+}
+
 public struct Sensitivities: Equatable, Sendable {
     public var mark: Double
     public var delta: Double
@@ -351,6 +366,45 @@ public enum Engine {
         return Sensitivities(mark: base, delta: (up - dn) / 0.02, gamma: up + dn - 2 * base,
                              vega: (f(1, 0.01) - f(1, -0.01)) / 2,
                              corr: corr, fundingDV: fdv, theta1m: theta)
+    }
+
+    /// Trading charges: the bridge from model mid to the dealer offer.
+    /// Skew is leg-isolated (the downside leg repriced at its strike vol);
+    /// overhedge shifts every discontinuity against the client; correlation
+    /// takes the adverse side of a ±Δρ band; vega bid-ask charges |vega|;
+    /// rebalancing/gap/model risk sit in the flat reserve. All diffs use the
+    /// same normal array (CRN), so they are clean of sampling noise.
+    public static func charges(_ s: Instrument, midValue: Double, vega: Double) -> ChargeStack {
+        guard s.chargesOn else {
+            return ChargeStack(skew: 0, overhedge: 0, corrBA: 0, vegaBA: 0,
+                               reserve: 0, total: 0, offer: midValue)
+        }
+        let baseF = simulate(s, paths: fastPaths)
+        var skew = 0.0
+        if s.downside != .par {
+            let extra = s.skewSlope * (1 - s.protection) * 10
+            let wing = simulate(s, volBump: extra, paths: fastPaths)
+            skew = max(wing.lossPV - baseF.lossPV, 0)
+        }
+        var s2 = s
+        if s2.downside != .par { s2.protection = min(0.99, s2.protection + s.barrierShift) }
+        if s2.coupon == .contingent { s2.couponBarrier = min(1.1, s2.couponBarrier + s.barrierShift) }
+        if s2.lockIn { s2.lockLevel += s.barrierShift }
+        if s2.secondChance { s2.secondChanceLevel += s.barrierShift }
+        let over = max(baseF.pv - simulate(s2, paths: fastPaths).pv, 0)
+        var corr = 0.0
+        if s.members.count > 1 {
+            var lo = s, hi = s
+            lo.correlation = max(0.0, s.correlation - s.corrBA)
+            hi.correlation = min(0.99, s.correlation + s.corrBA)
+            let adverse = min(simulate(lo, paths: fastPaths).pv, simulate(hi, paths: fastPaths).pv)
+            corr = max(baseF.pv - adverse, 0)
+        }
+        let vba = abs(vega) * s.volBA * 100
+        let res = s.reserveBps / 10000
+        let total = skew + over + corr + vba + res
+        return ChargeStack(skew: skew, overhedge: over, corrBA: corr, vegaBA: vba,
+                           reserve: res, total: total, offer: midValue - total)
     }
 
     public static func spotLadder(_ s: Instrument) -> [LadderRow] {

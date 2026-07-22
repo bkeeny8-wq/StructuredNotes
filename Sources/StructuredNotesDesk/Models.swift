@@ -146,6 +146,13 @@ public struct Instrument: Hashable, Sendable {
     // economics
     public var fundingSpread: Double
     public var volShift: Double
+    // charges & reserves: bridge model mid to the dealer offer
+    public var chargesOn: Bool
+    public var skewSlope: Double        // vol pts per 10% moneyness on the downside wing
+    public var barrierShift: Double     // client-adverse overhedge shift on discontinuities
+    public var corrBA: Double           // correlation bid-ask half-width
+    public var volBA: Double            // vol bid-ask, charged on |vega|
+    public var reserveBps: Double       // flat model/rebalancing reserve
 
     public var nonCallYears: Double { nonCallMonths / 12.0 }
 
@@ -160,7 +167,9 @@ public struct Instrument: Hashable, Sendable {
         upside: UpsideKind, participation: Double, cap: Double?, digital: Double,
         downside: DownsideKind, protection: Double, gearedBuffer: Bool,
         minRedemption: Double, secondChance: Bool, secondChanceLevel: Double,
-        protObs: ProtectionObs, fundingSpread: Double, volShift: Double
+        protObs: ProtectionObs, fundingSpread: Double, volShift: Double,
+        chargesOn: Bool, skewSlope: Double, barrierShift: Double,
+        corrBA: Double, volBA: Double, reserveBps: Double
     ) {
         self.members = members; self.basket = basket; self.weights = weights; self.correlation = correlation
         self.termYears = termYears; self.averaging = averaging
@@ -173,6 +182,8 @@ public struct Instrument: Hashable, Sendable {
         self.downside = downside; self.protection = protection; self.gearedBuffer = gearedBuffer
         self.minRedemption = minRedemption; self.secondChance = secondChance; self.secondChanceLevel = secondChanceLevel
         self.protObs = protObs; self.fundingSpread = fundingSpread; self.volShift = volShift
+        self.chargesOn = chargesOn; self.skewSlope = skewSlope; self.barrierShift = barrierShift
+        self.corrBA = corrBA; self.volBA = volBA; self.reserveBps = reserveBps
     }
 
 }
@@ -194,5 +205,7 @@ extension Instrument {
         downside: .par, protection: 0.60, gearedBuffer: false,
         minRedemption: 0, secondChance: false, secondChanceLevel: 0.60,
         protObs: .european,
-        fundingSpread: 0.005, volShift: 0)
+        fundingSpread: 0.005, volShift: 0,
+        chargesOn: true, skewSlope: 0.010, barrierShift: 0.01,
+        corrBA: 0.03, volBA: 0.005, reserveBps: 10)
 }
