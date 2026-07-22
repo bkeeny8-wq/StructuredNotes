@@ -84,8 +84,15 @@ public enum ProtectionObs: String, CaseIterable, Identifiable, Hashable, Sendabl
     case european = "European (final only)"
     case quarterly = "Quarterly monitored"
     case monthly = "Monthly monitored"
+    case daily = "Daily (Brownian bridge)"
     public var id: String { rawValue }
-    public var perYear: Int { self == .european ? 0 : (self == .quarterly ? 4 : 12) }
+    public var perYear: Int {
+        switch self {
+        case .european: return 0
+        case .quarterly: return 4
+        default: return 12
+        }
+    }
 }
 
 public enum DownsideKind: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -143,8 +150,15 @@ public struct Instrument: Hashable, Sendable {
     public var secondChance: Bool           // Elite: a monitored knock is forgiven if the
     public var secondChanceLevel: Double    // final level recovers to at least this
     public var protObs: ProtectionObs
-    // economics
-    public var fundingSpread: Double
+    // rates & funding: editable UST pillars + a two-point funding spread curve
+    public var ust3m: Double
+    public var ust1y: Double
+    public var ust2y: Double
+    public var ust3y: Double
+    public var ust5y: Double
+    public var ust7y: Double
+    public var spreadShort: Double      // funding spread over UST at 1y
+    public var spreadLong: Double       // funding spread over UST at 7y (interpolated between)
     public var volShift: Double
     // charges & reserves: bridge model mid to the dealer offer
     public var chargesOn: Bool
@@ -153,6 +167,7 @@ public struct Instrument: Hashable, Sendable {
     public var corrBA: Double           // correlation bid-ask half-width
     public var volBA: Double            // vol bid-ask, charged on |vega|
     public var reserveBps: Double       // flat model/rebalancing reserve
+    public var ufFee: Double            // underwriting fee: advisor + wholesaler, % of reoffer
 
     public var nonCallYears: Double { nonCallMonths / 12.0 }
 
@@ -167,9 +182,11 @@ public struct Instrument: Hashable, Sendable {
         upside: UpsideKind, participation: Double, cap: Double?, digital: Double,
         downside: DownsideKind, protection: Double, gearedBuffer: Bool,
         minRedemption: Double, secondChance: Bool, secondChanceLevel: Double,
-        protObs: ProtectionObs, fundingSpread: Double, volShift: Double,
+        protObs: ProtectionObs,
+        ust3m: Double, ust1y: Double, ust2y: Double, ust3y: Double, ust5y: Double, ust7y: Double,
+        spreadShort: Double, spreadLong: Double, volShift: Double,
         chargesOn: Bool, skewSlope: Double, barrierShift: Double,
-        corrBA: Double, volBA: Double, reserveBps: Double
+        corrBA: Double, volBA: Double, reserveBps: Double, ufFee: Double
     ) {
         self.members = members; self.basket = basket; self.weights = weights; self.correlation = correlation
         self.termYears = termYears; self.averaging = averaging
@@ -181,9 +198,12 @@ public struct Instrument: Hashable, Sendable {
         self.upside = upside; self.participation = participation; self.cap = cap; self.digital = digital
         self.downside = downside; self.protection = protection; self.gearedBuffer = gearedBuffer
         self.minRedemption = minRedemption; self.secondChance = secondChance; self.secondChanceLevel = secondChanceLevel
-        self.protObs = protObs; self.fundingSpread = fundingSpread; self.volShift = volShift
+        self.protObs = protObs
+        self.ust3m = ust3m; self.ust1y = ust1y; self.ust2y = ust2y
+        self.ust3y = ust3y; self.ust5y = ust5y; self.ust7y = ust7y
+        self.spreadShort = spreadShort; self.spreadLong = spreadLong; self.volShift = volShift
         self.chargesOn = chargesOn; self.skewSlope = skewSlope; self.barrierShift = barrierShift
-        self.corrBA = corrBA; self.volBA = volBA; self.reserveBps = reserveBps
+        self.corrBA = corrBA; self.volBA = volBA; self.reserveBps = reserveBps; self.ufFee = ufFee
     }
 
 }
@@ -205,7 +225,9 @@ extension Instrument {
         downside: .par, protection: 0.60, gearedBuffer: false,
         minRedemption: 0, secondChance: false, secondChanceLevel: 0.60,
         protObs: .european,
-        fundingSpread: 0.005, volShift: 0,
+        ust3m: 0.0385, ust1y: 0.0401, ust2y: 0.0418,
+        ust3y: 0.0421, ust5y: 0.0428, ust7y: 0.0440,
+        spreadShort: 0.004, spreadLong: 0.006, volShift: 0,
         chargesOn: true, skewSlope: 0.010, barrierShift: 0.01,
-        corrBA: 0.03, volBA: 0.005, reserveBps: 10)
+        corrBA: 0.03, volBA: 0.005, reserveBps: 10, ufFee: 0.025)
 }

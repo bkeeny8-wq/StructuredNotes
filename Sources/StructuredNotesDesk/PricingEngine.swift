@@ -117,6 +117,15 @@ public enum Engine {
         return out
     }()
 
+    /// Bump-stable uniforms for Brownian-bridge barrier hits.
+    static let uniforms: [Double] = {
+        let need = fullPaths * maxSlotsPerPath * maxAssets
+        var rng = SplitMix64(state: seed &+ 0x9E3779B97F4A7C15)
+        var out = [Double](); out.reserveCapacity(need)
+        for _ in 0..<need { out.append(rng.uniform()) }
+        return out
+    }()
+
     static func cholesky(rho: Double, n: Int) -> [[Double]] {
         if n == 1 { return [[1]] }
         var L = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
@@ -128,6 +137,29 @@ public enum Engine {
             }
         }
         return L
+    }
+
+    /// Risk-free zero from the instrument's editable pillars (linear, flat ends).
+    public static func zeroRF(_ s: Instrument, _ t: Double) -> Double {
+        let p: [(Double, Double)] = [(0.25, s.ust3m), (1, s.ust1y), (2, s.ust2y),
+                                     (3, s.ust3y), (5, s.ust5y), (7, s.ust7y)]
+        if t <= p[0].0 { return p[0].1 }
+        for k in 1..<p.count where t <= p[k].0 {
+            let (t0, r0) = p[k - 1], (t1, r1) = p[k]
+            return r0 + (r1 - r0) * (t - t0) / (t1 - t0)
+        }
+        return p.last!.1
+    }
+
+    /// Funding spread curve: linear between the 1y and 7y pillars, flat ends.
+    public static func spread(_ s: Instrument, _ t: Double) -> Double {
+        if t <= 1 { return s.spreadShort }
+        if t >= 7 { return s.spreadLong }
+        return s.spreadShort + (s.spreadLong - s.spreadShort) * (t - 1) / 6
+    }
+
+    public static func fundingZero(_ s: Instrument, _ t: Double) -> Double {
+        zeroRF(s, t) + spread(s, t)
     }
 
     @inline(__always)
@@ -186,8 +218,6 @@ public enum Engine {
                          paths: Int = fullPaths) -> SimOut {
         let assets = Market.assets(for: s.members)
         let nA = min(assets.count, maxAssets)
-        let r = Market.ust
-        let rf = Market.ust + s.fundingSpread
         let c = s.coupon == .none ? 0 : s.couponRate
 
         let couponActive = s.coupon != .none
@@ -212,15 +242,42 @@ public enum Engine {
         let dtSub = nSubs > 0 ? dt / Double(nSubs) : 0
         let sqdtSub = dtSub > 0 ? dtSub.squareRoot() : 0
 
-        var vols = [Double](), drifts = [Double](), driftsSub = [Double]()
+        var vols = [Double](), qv = [Double](), qvSub = [Double](), divsArr = [Double]()
         for a in assets.prefix(nA) {
             let v = max(0.01, a.vol + s.volShift + volBump)
-            vols.append(v)
-            drifts.append((r - a.div - v * v / 2) * dt)
-            driftsSub.append((r - a.div - v * v / 2) * dtSub)
+            vols.append(v); divsArr.append(a.div)
+            qv.append((a.div + v * v / 2) * dt)
+            qvSub.append((a.div + v * v / 2) * dtSub)
+        }
+        // discount factors at step dates off the funding curve; risk-free
+        // forwards between steps drive the drift
+        var dfArr = [Double](repeating: 1, count: nSteps + 1)
+        var fwdDt = [Double](repeating: 0, count: nSteps + 1)
+        var prevZT = 0.0
+        for i in 1...nSteps {
+            let t = Double(i) * dt
+            dfArr[i] = exp(-fundingZero(s, t) * t)
+            let zT = zeroRF(s, t) * t
+            fwdDt[i] = zT - prevZT
+            prevZT = zT
         }
         let L = cholesky(rho: min(0.99, max(-0.45, s.correlation)), n: nA)
         let z = normals
+        let u = uniforms
+        let bridge = s.downside == .kiPut && s.protObs == .daily
+        var basketVol = 0.0
+        if bridge && nA > 1 && s.basket == .weighted {
+            var num = 0.0, den = 0.0
+            let rho = min(0.99, max(-0.45, s.correlation))
+            for i in 0..<nA {
+                let wi = max(s.weights[i], 1e-6); den += wi
+                for j in 0..<nA {
+                    let wj = max(s.weights[j], 1e-6)
+                    num += wi * wj * vols[i] * vols[j] * (i == j ? 1 : rho)
+                }
+            }
+            basketVol = num.squareRoot() / den
+        }
 
         var out = SimOut()
         var closes = [Double](repeating: 0, count: 21 * nA)
@@ -232,18 +289,21 @@ public enum Engine {
             var locked = false
             var cpv = 0.0, parpv = 0.0, uppv = 0.0, losspv = 0.0
             var qacc = 0.0, uacc = 0.0
+            var xPrev = x
+            var zPrev = perf(x, s)
             let base = pth * maxSlotsPerPath * nA
             for i in 1...nSteps {
                 let t = Double(i) * dt
                 let isFinal = (i == nSteps)
 
                 if isFinal && nSubs > 0 {
+                    let fwdSub = fwdDt[i] / Double(nSubs)
                     for sub in 0..<nSubs {
                         let slot = base + (nSteps - 1 + sub) * nA
                         for j in 0..<nA {
                             var e = 0.0
                             for k in 0...j { e += L[j][k] * z[slot + k] }
-                            x[j] *= exp(driftsSub[j] + vols[j] * sqdtSub * e)
+                            x[j] *= exp(fwdSub - qvSub[j] + vols[j] * sqdtSub * e)
                             closes[sub * nA + j] = x[j]
                         }
                     }
@@ -252,7 +312,7 @@ public enum Engine {
                     for j in 0..<nA {
                         var e = 0.0
                         for k in 0...j { e += L[j][k] * z[slot + k] }
-                        x[j] *= exp(drifts[j] + vols[j] * sqdt * e)
+                        x[j] *= exp(fwdDt[i] - qv[j] + vols[j] * sqdt * e)
                     }
                 }
 
@@ -269,9 +329,24 @@ public enum Engine {
                 let isCouponDate = couponActive && (i % couponEvery == 0)
                 let isProtDate = s.downside == .kiPut &&
                     (s.protObs == .european ? isFinal : (i % protEvery == 0 || isFinal))
-                let df = exp(-rf * t)
+                let df = dfArr[i]
 
                 if isProtDate && zNow < s.protection { knocked = true }
+                if bridge && !knocked && !(isFinal && nSubs > 0) {
+                    // hit probability between grid closes, per asset (worst-of)
+                    // or on the basket with a portfolio-vol proxy (weighted)
+                    let B = s.protection
+                    if s.basket == .worstOf || nA == 1 {
+                        for j in 0..<nA where xPrev[j] > B && x[j] > B {
+                            let pHit = exp(-2 * log(xPrev[j] / B) * log(x[j] / B) / (vols[j] * vols[j] * dt))
+                            if u[base + (i - 1) * nA + j] < pHit { knocked = true; break }
+                        }
+                    } else if zPrev > B && zNow > B && basketVol > 0 {
+                        let pHit = exp(-2 * log(zPrev / B) * log(zNow / B) / (basketVol * basketVol * dt))
+                        if u[base + (i - 1) * nA] < pHit { knocked = true }
+                    }
+                }
+                xPrev = x; zPrev = zNow
                 if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
                 if s.lockIn && zNow >= s.lockLevel {
                     let lockObs = (callActive && i % callEvery == 0)
@@ -359,7 +434,7 @@ public enum Engine {
             var s2 = s; s2.correlation = min(0.99, s.correlation + 0.05)
             corr = simulate(s2).pv - base
         }
-        var s3 = s; s3.fundingSpread += 0.001
+        var s3 = s; s3.spreadShort += 0.001; s3.spreadLong += 0.001
         let fdv = simulate(s3).pv - base
         var s4 = s; s4.termYears = max(1.0 / 12.0, s.termYears - 1.0 / 12.0)
         let theta = simulate(s4).pv - base
@@ -416,6 +491,59 @@ public enum Engine {
         }
     }
 
+    public struct ScenarioRow: Equatable, Identifiable, Sendable {
+        public var id: Double { spot }
+        public var spot: Double
+        public var mark: Double
+        public var delta: Double
+    
+        public init(spot: Double, mark: Double, delta: Double) {
+            self.spot = spot; self.mark = mark; self.delta = delta
+        }
+}
+    public struct EventBlock: Equatable, Identifiable, Sendable {
+        public var id: String { title }
+        public var title: String
+        public var rows: [ScenarioRow]
+        public var caption: String
+    
+        public init(title: String, rows: [ScenarioRow], caption: String) {
+            self.title = title; self.rows = rows; self.caption = caption
+        }
+}
+
+    /// Roll the clock to the note's discontinuities and tabulate value and
+    /// delta across spots bracketing the level — pin risk when it matters.
+    public static func eventScenarios(_ s: Instrument) -> [EventBlock] {
+        var out: [EventBlock] = []
+        func block(_ s2: Instrument, level: Double, title: String, caption: String) {
+            let rows = [level - 0.04, level - 0.015, level, level + 0.015, level + 0.04].map { lvl -> ScenarioRow in
+                let up = simulate(s2, spotScale: lvl * 1.01, paths: fastPaths).pv
+                let dn = simulate(s2, spotScale: lvl * 0.99, paths: fastPaths).pv
+                let mk = simulate(s2, spotScale: lvl, paths: fastPaths).pv
+                return ScenarioRow(spot: lvl, mark: mk, delta: (up - dn) / 0.02)
+            }
+            out.append(EventBlock(title: title, rows: rows, caption: caption))
+        }
+        if s.call != .none, s.termYears > s.nonCallYears + 0.05 {
+            var s2 = s
+            s2.termYears = max(0.25, s.termYears - s.nonCallYears)
+            s2.nonCallMonths = 0
+            block(s2, level: s.callTrigger,
+                  title: "At the first call observation · spot around the \(Int(s.callTrigger * 100))% trigger",
+                  caption: "Delta flips through the trigger — the desk sells the rally that calls the note away.")
+        }
+        if s.downside == .kiPut {
+            var s3 = s
+            s3.termYears = 1.0 / 12.0
+            s3.nonCallMonths = 24
+            block(s3, level: s.protection,
+                  title: "One month to maturity · spot around the \(Int(s.protection * 100))% KI",
+                  caption: "The cliff: delta concentrates just above the barrier and dies below it — the hardest month in the book.")
+        }
+        return out
+    }
+
     /// Rebuild the instrument one feature at a time and price each stage.
     /// Deltas between rows are each feature's price in points of par.
     public static func featureLedger(_ s: Instrument) -> [LedgerRow] {
@@ -451,7 +579,8 @@ public enum Engine {
             add("+ min redemption floor \(Int(s.minRedemption * 100))%") { $0.minRedemption = s.minRedemption }
         }
         if s.downside == .kiPut && s.protObs != .european {
-            add("+ monitored barrier (\(s.protObs == .monthly ? "monthly" : "quarterly"))") { $0.protObs = s.protObs }
+            let obsName = s.protObs == .monthly ? "monthly" : (s.protObs == .quarterly ? "quarterly" : "daily bridge")
+            add("+ monitored barrier (\(obsName))") { $0.protObs = s.protObs }
         }
         if s.downside == .kiPut && s.secondChance {
             add("+ second chance ≥\(Int(s.secondChanceLevel * 100))% (Elite)") {

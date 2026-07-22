@@ -7,16 +7,16 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		D19025D6E68B4505963375ED /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B4A9B73FA1421B96A5BD10 /* Models.swift */; };
-		3D76DF837627485F89993B5C /* MarketData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494CDC0C55224BF09C93B397 /* MarketData.swift */; };
-		81FB358F8BAC4037B0C80271 /* PricingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B48F785EEBFF4A14873097B7 /* PricingEngine.swift */; };
-		465F9E184D82437CB81BD0C4 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89E96A6E281042998A4F6366 /* Components.swift */; };
-		CB2646695AB24DD8B1B32800 /* DeskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C163A953E8C44327A7593A92 /* DeskView.swift */; };
-		53C035C78BAA45B289770242 /* StructuredNotesDesk.h in Headers */ = {isa = PBXBuildFile; fileRef = 5F5E691F5272456BB085B877 /* StructuredNotesDesk.h */; settings = {ATTRIBUTES = (Public, ); }; };
-		B853FB730C16473E8EF34999 /* StructuredNotesDeskApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27563524A116480AA280C790 /* StructuredNotesDeskApp.swift */; };
-		195D009F6E0444A1BD5D6DE7 /* StructuredNotesDesk.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */; };
-		9D08475DC4894B0E931DAF33 /* StructuredNotesDesk.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
 		0485E0305F814AE5963B6672 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 6C36AD14D60D4E9EB00B8D53 /* Assets.xcassets */; };
+		195D009F6E0444A1BD5D6DE7 /* StructuredNotesDesk.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */; };
+		3D76DF837627485F89993B5C /* MarketData.swift in Sources */ = {isa = PBXBuildFile; fileRef = 494CDC0C55224BF09C93B397 /* MarketData.swift */; };
+		465F9E184D82437CB81BD0C4 /* Components.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89E96A6E281042998A4F6366 /* Components.swift */; };
+		53C035C78BAA45B289770242 /* StructuredNotesDesk.h in Headers */ = {isa = PBXBuildFile; fileRef = 5F5E691F5272456BB085B877 /* StructuredNotesDesk.h */; settings = {ATTRIBUTES = (Public, ); }; };
+		81FB358F8BAC4037B0C80271 /* PricingEngine.swift in Sources */ = {isa = PBXBuildFile; fileRef = B48F785EEBFF4A14873097B7 /* PricingEngine.swift */; };
+		9D08475DC4894B0E931DAF33 /* StructuredNotesDesk.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B853FB730C16473E8EF34999 /* StructuredNotesDeskApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 27563524A116480AA280C790 /* StructuredNotesDeskApp.swift */; };
+		CB2646695AB24DD8B1B32800 /* DeskView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C163A953E8C44327A7593A92 /* DeskView.swift */; };
+		D19025D6E68B4505963375ED /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B4A9B73FA1421B96A5BD10 /* Models.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -44,17 +44,17 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		12D47E057BE84601BB287EE5 /* StructuredNotesDeskExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StructuredNotesDeskExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		27563524A116480AA280C790 /* StructuredNotesDeskApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredNotesDeskApp.swift; sourceTree = "<group>"; };
 		38B4A9B73FA1421B96A5BD10 /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		494CDC0C55224BF09C93B397 /* MarketData.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MarketData.swift; sourceTree = "<group>"; };
-		B48F785EEBFF4A14873097B7 /* PricingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingEngine.swift; sourceTree = "<group>"; };
-		89E96A6E281042998A4F6366 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
-		C163A953E8C44327A7593A92 /* DeskView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeskView.swift; sourceTree = "<group>"; };
 		5F5E691F5272456BB085B877 /* StructuredNotesDesk.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = StructuredNotesDesk.h; sourceTree = "<group>"; };
-		27563524A116480AA280C790 /* StructuredNotesDeskApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StructuredNotesDeskApp.swift; sourceTree = "<group>"; };
-		DA8D28C0F2844B4DB247F718 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		6C36AD14D60D4E9EB00B8D53 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		89E96A6E281042998A4F6366 /* Components.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Components.swift; sourceTree = "<group>"; };
 		9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = StructuredNotesDesk.framework; sourceTree = BUILT_PRODUCTS_DIR; };
-		12D47E057BE84601BB287EE5 /* StructuredNotesDeskExample.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StructuredNotesDeskExample.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		B48F785EEBFF4A14873097B7 /* PricingEngine.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PricingEngine.swift; sourceTree = "<group>"; };
+		C163A953E8C44327A7593A92 /* DeskView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DeskView.swift; sourceTree = "<group>"; };
+		DA8D28C0F2844B4DB247F718 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -76,15 +76,6 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
-		EEC7082F228E44508B711552 = {
-			isa = PBXGroup;
-			children = (
-				2E4E2B8660F24D7CA67945C4 /* StructuredNotesDesk */,
-				77CB74876AC3436FA049951B /* Example */,
-				4A605E3048BB4C90833A5A29 /* Products */,
-			);
-			sourceTree = "<group>";
-		};
 		2E4E2B8660F24D7CA67945C4 /* StructuredNotesDesk */ = {
 			isa = PBXGroup;
 			children = (
@@ -99,6 +90,15 @@
 			path = Sources/StructuredNotesDesk;
 			sourceTree = "<group>";
 		};
+		4A605E3048BB4C90833A5A29 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */,
+				12D47E057BE84601BB287EE5 /* StructuredNotesDeskExample.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
 		77CB74876AC3436FA049951B /* Example */ = {
 			isa = PBXGroup;
 			children = (
@@ -109,13 +109,13 @@
 			path = Example;
 			sourceTree = "<group>";
 		};
-		4A605E3048BB4C90833A5A29 /* Products */ = {
+		EEC7082F228E44508B711552 = {
 			isa = PBXGroup;
 			children = (
-				9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */,
-				12D47E057BE84601BB287EE5 /* StructuredNotesDeskExample.app */,
+				2E4E2B8660F24D7CA67945C4 /* StructuredNotesDesk */,
+				77CB74876AC3436FA049951B /* Example */,
+				4A605E3048BB4C90833A5A29 /* Products */,
 			);
-			name = Products;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -132,24 +132,6 @@
 /* End PBXHeadersBuildPhase section */
 
 /* Begin PBXNativeTarget section */
-		6E9391A562894C99A414BDC2 /* StructuredNotesDesk */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = 475CBA5FEA87413B8484A9D4 /* Build configuration list for PBXNativeTarget "StructuredNotesDesk" */;
-			buildPhases = (
-				B209B00D6C8C431FBE999813 /* Headers */,
-				45D8002CC9DD423F9BC81986 /* Sources */,
-				119B000C320B41BB99D40C46 /* Frameworks */,
-				A91386CCB0A14FA79C0F0237 /* Resources */,
-			);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = StructuredNotesDesk;
-			productName = StructuredNotesDesk;
-			productReference = 9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */;
-			productType = "com.apple.product-type.framework";
-		};
 		65CBE1D9C646418599FDF5A2 /* StructuredNotesDeskExample */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = 25C8F13060C4437DBEB379BA /* Build configuration list for PBXNativeTarget "StructuredNotesDeskExample" */;
@@ -169,6 +151,24 @@
 			productReference = 12D47E057BE84601BB287EE5 /* StructuredNotesDeskExample.app */;
 			productType = "com.apple.product-type.application";
 		};
+		6E9391A562894C99A414BDC2 /* StructuredNotesDesk */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 475CBA5FEA87413B8484A9D4 /* Build configuration list for PBXNativeTarget "StructuredNotesDesk" */;
+			buildPhases = (
+				B209B00D6C8C431FBE999813 /* Headers */,
+				45D8002CC9DD423F9BC81986 /* Sources */,
+				119B000C320B41BB99D40C46 /* Frameworks */,
+				A91386CCB0A14FA79C0F0237 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = StructuredNotesDesk;
+			productName = StructuredNotesDesk;
+			productReference = 9104E9FED0E24343AF4AC21D /* StructuredNotesDesk.framework */;
+			productType = "com.apple.product-type.framework";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -179,10 +179,10 @@
 				LastSwiftUpdateCheck = 2600;
 				LastUpgradeCheck = 2600;
 				TargetAttributes = {
-					6E9391A562894C99A414BDC2 = {
+					65CBE1D9C646418599FDF5A2 = {
 						CreatedOnToolsVersion = 26.0;
 					};
-					65CBE1D9C646418599FDF5A2 = {
+					6E9391A562894C99A414BDC2 = {
 						CreatedOnToolsVersion = 26.0;
 					};
 				};
@@ -207,18 +207,18 @@
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
-		A91386CCB0A14FA79C0F0237 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
 		00A138A390AB4E949E1F780A /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
 				0485E0305F814AE5963B6672 /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		A91386CCB0A14FA79C0F0237 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -256,6 +256,71 @@
 /* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
+		19A4F72AD235423BBABB4C99 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDesk;
+				PRODUCT_MODULE_NAME = StructuredNotesDesk;
+				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
+				SKIP_INSTALL = YES;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_INSTALL_OBJC_HEADER = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				VERSIONING_SYSTEM = "apple-generic";
+				VERSION_INFO_PREFIX = "";
+			};
+			name = Release;
+		};
+		868123B55AE0446CAA184DF9 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HHSFT2GD2H;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Example/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Structured Notes";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDeskExample;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
 		A76F0E12BB1F47B1AD73C166 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -292,6 +357,37 @@
 			};
 			name = Release;
 		};
+		DA8B5523F27E42B0930D51E6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = HHSFT2GD2H;
+				ENABLE_PREVIEWS = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = Example/Info.plist;
+				INFOPLIST_KEY_CFBundleDisplayName = "Structured Notes";
+				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
+				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDeskExample;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
 		F2E56A33E7AF4AB892500CC8 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -326,105 +422,18 @@
 			};
 			name = Debug;
 		};
-		19A4F72AD235423BBABB4C99 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				BUILD_LIBRARY_FOR_DISTRIBUTION = NO;
-				CURRENT_PROJECT_VERSION = 1;
-				DEFINES_MODULE = YES;
-				DYLIB_COMPATIBILITY_VERSION = 1;
-				DYLIB_CURRENT_VERSION = 1;
-				DYLIB_INSTALL_NAME_BASE = "@rpath";
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_KEY_NSHumanReadableCopyright = "";
-				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-					"@loader_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDesk;
-				PRODUCT_MODULE_NAME = StructuredNotesDesk;
-				PRODUCT_NAME = "$(TARGET_NAME:c99extidentifier)";
-				SKIP_INSTALL = YES;
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_INSTALL_OBJC_HEADER = NO;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-				VERSIONING_SYSTEM = "apple-generic";
-				VERSION_INFO_PREFIX = "";
-			};
-			name = Release;
-		};
-		DA8B5523F27E42B0930D51E6 /* Debug */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Example/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Structured Notes";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDeskExample;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Debug;
-		};
-		868123B55AE0446CAA184DF9 /* Release */ = {
-			isa = XCBuildConfiguration;
-			buildSettings = {
-				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
-				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
-				DEVELOPMENT_TEAM = "";
-				ENABLE_PREVIEWS = YES;
-				GENERATE_INFOPLIST_FILE = YES;
-				INFOPLIST_FILE = Example/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = "Structured Notes";
-				INFOPLIST_KEY_UIApplicationSceneManifest_Generation = YES;
-				INFOPLIST_KEY_UILaunchScreen_Generation = YES;
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPad = "UIInterfaceOrientationPortrait UIInterfaceOrientationPortraitUpsideDown UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				INFOPLIST_KEY_UISupportedInterfaceOrientations_iPhone = "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight";
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
-				LD_RUNPATH_SEARCH_PATHS = (
-					"$(inherited)",
-					"@executable_path/Frameworks",
-				);
-				MARKETING_VERSION = 1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDeskExample;
-				PRODUCT_NAME = "$(TARGET_NAME)";
-				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
-				SUPPORTS_MACCATALYST = NO;
-				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_VERSION = 5.0;
-				TARGETED_DEVICE_FAMILY = "1,2";
-			};
-			name = Release;
-		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		25C8F13060C4437DBEB379BA /* Build configuration list for PBXNativeTarget "StructuredNotesDeskExample" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				DA8B5523F27E42B0930D51E6 /* Debug */,
+				868123B55AE0446CAA184DF9 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		3C65E1921A4A4A3096F31A58 /* Build configuration list for PBXProject "StructuredNotesDesk" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -439,15 +448,6 @@
 			buildConfigurations = (
 				F2E56A33E7AF4AB892500CC8 /* Debug */,
 				19A4F72AD235423BBABB4C99 /* Release */,
-			);
-			defaultConfigurationIsVisible = 0;
-			defaultConfigurationName = Release;
-		};
-		25C8F13060C4437DBEB379BA /* Build configuration list for PBXNativeTarget "StructuredNotesDeskExample" */ = {
-			isa = XCConfigurationList;
-			buildConfigurations = (
-				DA8B5523F27E42B0930D51E6 /* Debug */,
-				868123B55AE0446CAA184DF9 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

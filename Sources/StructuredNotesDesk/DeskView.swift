@@ -16,6 +16,7 @@ public struct DeskView: View {
     @State private var ladder: [LadderRow] = []
     @State private var ledger: [LedgerRow] = []
     @State private var charges: ChargeStack?
+    @State private var events: [Engine.EventBlock] = []
     @State private var pricing = false
 
     private let notional = 1000.0
@@ -40,8 +41,19 @@ public struct DeskView: View {
 
     private var header: some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text("Structured Notes")
-                .font(.system(size: 26, weight: .semibold, design: .serif))
+            HStack(alignment: .firstTextBaseline) {
+                Text("Structured Notes")
+                    .font(.system(size: 26, weight: .semibold, design: .serif))
+                Spacer()
+                Button {
+                    spec = .initial
+                } label: {
+                    Label("Reset", systemImage: "arrow.counterclockwise")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.bordered)
+                .tint(Theme.ink)
+            }
             Divider().overlay(Theme.ink)
         }
     }
@@ -81,6 +93,9 @@ public struct DeskView: View {
             LeverRow(label: "Model / rebalancing reserve",
                      display: String(format: "%.0fbp", spec.reserveBps),
                      value: $spec.reserveBps, range: 0...50, step: 5)
+            LeverRow(label: "UF — advisor + wholesaler (of reoffer)",
+                     display: Fmt.pct(spec.ufFee),
+                     value: $spec.ufFee, range: 0...0.05, step: 0.0025)
             Text("Flat-vol Monte Carlo is a mid. These are the desk's costs of being wrong: the KI wing, unreplicable digitals, unhedgeable correlation.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
@@ -117,7 +132,7 @@ public struct DeskView: View {
             ForEach(spec.members, id: \.self) { m in
                 let a = Market.asset(m)
                 let px = a.spot == 0 ? "—" : (a.spot < 1000 ? String(format: "%.2f", a.spot) : Fmt.usd0(a.spot))
-                Text("\(a.ticker) \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? "" : " est") · q \(Fmt.pct(a.div, 2)) · \(a.tapeCount) tape prints")
+                Text("\(a.ticker) \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? "" : " est") · q \(Fmt.pct(a.div, 2))")
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
             }
             if spec.members.count > 1 {
@@ -211,18 +226,22 @@ public struct DeskView: View {
                   offHint: "Off — bullet, runs to maturity.") {
             ChoiceChips(options: [(CallFeature.autocall, "Autocall"), (.issuerCall, "Issuer call")],
                         selection: spec.call) { k in
-                mutate { $0.call = k }
+                mutate { s in
+                    s.call = k
+                    if k == .issuerCall { s.callTrigger = 1.0; s.triggerStep = 0 }
+                }
             }
             Group {
                 Picker("Call observations", selection: $spec.callObs) {
                     ForEach(CallObs.allCases) { o in Text(o.rawValue).tag(o) }
                 }
                 .pickerStyle(.menu).tint(Theme.ink)
-                LeverRow(label: spec.call == .autocall ? "Autocall trigger" : "Issuer-call rule: calls at ≥",
-                         display: Fmt.pct(spec.callTrigger, 0),
-                         value: $spec.callTrigger, range: 0.7...1.1, step: 0.01)
-                LeverRow(label: "Trigger step-down", display: spec.triggerStep == 0 ? "off" : String(format: "−%.0f%%/yr", spec.triggerStep * 100),
-                         value: $spec.triggerStep, range: 0...0.10, step: 0.005)
+                if spec.call == .autocall {
+                    LeverRow(label: "Autocall trigger", display: Fmt.pct(spec.callTrigger, 0),
+                             value: $spec.callTrigger, range: 0.7...1.1, step: 0.01)
+                    LeverRow(label: "Trigger step-down", display: spec.triggerStep == 0 ? "off" : String(format: "−%.0f%%/yr", spec.triggerStep * 100),
+                             value: $spec.triggerStep, range: 0...0.10, step: 0.005)
+                }
                 LeverRow(label: "Non-call period", display: String(format: "%.0fm", spec.nonCallMonths),
                          value: $spec.nonCallMonths, range: 0...24, step: 1)
                 if spec.coupon != .none {
@@ -244,7 +263,7 @@ public struct DeskView: View {
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 if spec.call == .issuerCall {
-                    Text("Rule-based issuer call — holder value shown is an upper bound (LSMC optimal exercise is worth less to the holder).")
+                    Text("Issuer may call at any observation after the non-call period. Priced as call at ≥ 100%, no adjustment — holder value is an upper bound (LSMC solves lower for the holder).")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
@@ -321,14 +340,112 @@ public struct DeskView: View {
     }
 
     private var economicsBlock: some View {
-        Card(title: "Economics") {
-            LeverRow(label: "Funding spread over UST \(Fmt.pct(Market.ust, 2))",
-                     display: Fmt.bp(spec.fundingSpread),
-                     value: $spec.fundingSpread, range: 0...0.02, step: 0.0005)
+        Card(title: "Rates & funding") {
+            curveChart
+            Text("Drag the chart to reshape the UST curve — the nearest pillar snaps to your finger. The shaded band is the credit spread resting on top. Sourced: Treasury.gov via Slickcharts, 7/17/26.")
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+            LeverRow(label: "Funding spread @ 1Y", display: Fmt.bp(spec.spreadShort),
+                     value: $spec.spreadShort, range: 0...0.02, step: 0.0005)
+            LeverRow(label: "Funding spread @ 7Y", display: Fmt.bp(spec.spreadLong),
+                     value: $spec.spreadLong, range: 0...0.02, step: 0.0005)
             LeverRow(label: "Vol shift (all names)", display: String(format: "%+.0f pts", spec.volShift * 100),
                      value: $spec.volShift, range: -0.10...0.15, step: 0.01)
-            Text("Output is the note's model value as % of par. Every dial is an input — iterate the levers, read the price.")
+            Text("Funding at \(termStr(spec.termYears)) = \(Fmt.pct(Engine.fundingZero(spec, spec.termYears), 2)). Cash flows discount off the funding curve at their own dates; paths drift off risk-free forwards.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
+        }
+    }
+
+    private struct CurvePt: Identifiable {
+        let id = UUID(); let t: Double; let lo: Double; let hi: Double
+    }
+    private var curveSamples: [CurvePt] {
+        stride(from: 0.25, through: 7.0, by: 0.25).map { t in
+            CurvePt(t: t, lo: Engine.zeroRF(spec, t) * 100, hi: Engine.fundingZero(spec, t) * 100)
+        }
+    }
+    private static let pillarTenors: [Double] = [0.25, 1, 2, 3, 5, 7]
+    private func pillarRate(_ t: Double) -> Double {
+        switch t {
+        case 0.25: return spec.ust3m
+        case 1: return spec.ust1y
+        case 2: return spec.ust2y
+        case 3: return spec.ust3y
+        case 5: return spec.ust5y
+        default: return spec.ust7y
+        }
+    }
+    private func setPillar(_ t: Double, _ r: Double) {
+        let v = min(0.07, max(0.02, (r / 0.0005).rounded() * 0.0005))
+        switch t {
+        case 0.25: spec.ust3m = v
+        case 1: spec.ust1y = v
+        case 2: spec.ust2y = v
+        case 3: spec.ust3y = v
+        case 5: spec.ust5y = v
+        default: spec.ust7y = v
+        }
+    }
+
+    private var curveChart: some View {
+        let pts = curveSamples
+        let yLo = (pts.map(\.lo).min() ?? 3.5) - 0.35
+        let yHi = (pts.map(\.hi).max() ?? 5.5) + 0.35
+        return Chart {
+            ForEach(pts) { p in
+                AreaMark(x: .value("Tenor", p.t),
+                         yStart: .value("UST", p.lo),
+                         yEnd: .value("Funding", p.hi))
+                    .foregroundStyle(Theme.amber.opacity(0.22))
+            }
+            ForEach(pts) { p in
+                LineMark(x: .value("Tenor", p.t), y: .value("Rate", p.lo),
+                         series: .value("s", "UST"))
+                    .foregroundStyle(Theme.ink)
+                    .lineStyle(StrokeStyle(lineWidth: 2))
+            }
+            ForEach(pts) { p in
+                LineMark(x: .value("Tenor", p.t), y: .value("Rate", p.hi),
+                         series: .value("s", "Funding"))
+                    .foregroundStyle(Theme.bond)
+                    .lineStyle(StrokeStyle(lineWidth: 2.2))
+            }
+            ForEach(Self.pillarTenors, id: \.self) { t in
+                PointMark(x: .value("Tenor", t), y: .value("Rate", pillarRate(t) * 100))
+                    .foregroundStyle(Theme.ink)
+                    .symbolSize(46)
+            }
+            RuleMark(x: .value("T", spec.termYears))
+                .foregroundStyle(Theme.loss.opacity(0.7))
+                .lineStyle(StrokeStyle(lineWidth: 1.2, dash: [4, 4]))
+                .annotation(position: .top, alignment: .leading) {
+                    Text("T · \(Fmt.pct(Engine.fundingZero(spec, spec.termYears), 2))")
+                        .font(.system(size: 9, design: .monospaced))
+                        .foregroundStyle(Theme.loss)
+                }
+        }
+        .chartYScale(domain: yLo...yHi)
+        .chartXScale(domain: 0...7.3)
+        .chartXAxisLabel("Tenor (years)")
+        .chartYAxisLabel("Rate %")
+        .frame(height: 185)
+        .chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle().fill(Color.clear).contentShape(Rectangle())
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { value in
+                                let frame = geo[proxy.plotAreaFrame]
+                                let x = value.location.x - frame.origin.x
+                                let y = value.location.y - frame.origin.y
+                                guard let t: Double = proxy.value(atX: x),
+                                      let r: Double = proxy.value(atY: y) else { return }
+                                let nearest = Self.pillarTenors.min {
+                                    abs($0 - t) < abs($1 - t)
+                                } ?? 3
+                                setPillar(nearest, r / 100)
+                            }
+                    )
+            }
         }
     }
 
@@ -406,6 +523,7 @@ public struct DeskView: View {
             workCard
             ledgerCard
             riskCard
+            eventCard
             ladderCard
             deskBookCard
         }
@@ -448,6 +566,12 @@ public struct DeskView: View {
                             .foregroundStyle(Theme.bond)
                     }
                     .padding(.top, 4)
+                    if spec.ufFee > 0.0001 {
+                        LegRow(label: "UF — advisor + wholesaler", value: "−" + Fmt.pct(spec.ufFee, 2), color: Theme.fee)
+                        LegRow(label: "Issuer net proceeds at par (100 − UF)", value: Fmt.pct(1 - spec.ufFee, 2))
+                        LegRow(label: "Structuring margin (proceeds − offer)",
+                               value: Fmt.pct(max(1 - spec.ufFee - ch.offer, 0), 2), color: Theme.bond)
+                    }
                     Text("This is the number that becomes the term sheet's estimated value — the model mid less the desk's cost of hedging what it cannot replicate.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 } else {
@@ -566,7 +690,9 @@ public struct DeskView: View {
 
     private func workLines(_ r: PricingResult) -> [String] {
         var out = [String]()
-        out.append("df(t) = e^(−(\(Fmt.pct(Market.ust, 2)) + \(Fmt.bp(spec.fundingSpread)))·t)")
+        let zT = Engine.fundingZero(spec, spec.termYears)
+        out.append("z_f(\(termStr(spec.termYears))) = UST(\(Fmt.pct(Engine.zeroRF(spec, spec.termYears), 2))) + spread(\(Fmt.bp(Engine.spread(spec, spec.termYears)))) = \(Fmt.pct(zT, 2))")
+        out.append("df(T) = e^(−z_f·T) = \(String(format: "%.4f", exp(-zT * spec.termYears))) · earlier flows discount at their own tenors")
         out.append("par leg  E[df(τ)]·1000 = \(Fmt.usd0(r.parLeg * notional))")
         if spec.downside != .par {
             out.append("downside E[df·shortfall] = \(Fmt.usd0(r.downsideLeg * notional))   P(loss) = \(Fmt.pct(r.probLoss, 0))")
@@ -644,6 +770,45 @@ public struct DeskView: View {
         }
     }
 
+    @ViewBuilder
+    private var eventCard: some View {
+        if spec.call != .none || spec.downside == .kiPut {
+            Card(title: "Event risk — into the discontinuities") {
+                if events.isEmpty {
+                    ProgressView("Rolling the clock to the events…").font(.footnote)
+                }
+                ForEach(events) { block in
+                    Text(block.title)
+                        .font(.system(size: 12, weight: .bold))
+                        .padding(.top, 2)
+                    HStack {
+                        Text("Spot").font(.system(size: 10, weight: .bold)).frame(width: 56, alignment: .leading)
+                        Text("Mark (% par)").font(.system(size: 10, weight: .bold)).frame(maxWidth: .infinity, alignment: .trailing)
+                        Text("Delta $/1k").font(.system(size: 10, weight: .bold)).frame(width: 96, alignment: .trailing)
+                    }
+                    .foregroundStyle(.secondary)
+                    ForEach(block.rows) { row in
+                        HStack {
+                            Text(Fmt.pct(row.spot, 1)).font(.system(size: 12.5, design: .monospaced))
+                                .frame(width: 56, alignment: .leading)
+                            Text(Fmt.pct(row.mark, 1)).font(.system(size: 12.5, design: .monospaced))
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            Text(Fmt.usd0(row.delta * notional))
+                                .font(.system(size: 12.5, weight: .bold, design: .monospaced))
+                                .foregroundStyle(abs(row.spot - (block.title.contains("KI") ? spec.protection : spec.callTrigger)) < 0.02 ? Theme.loss : Theme.ink)
+                                .frame(width: 96, alignment: .trailing)
+                        }
+                        .padding(.vertical, 2)
+                        .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+                    }
+                    Text(block.caption)
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .padding(.bottom, 4)
+                }
+            }
+        }
+    }
+
     private var ladderCard: some View {
         Card(title: "Spot ladder — value and delta into the barrier") {
             if ladder.isEmpty {
@@ -681,66 +846,79 @@ public struct DeskView: View {
 
     private var deskBookCard: some View {
         Card(title: "Desk book") {
-            ForEach(deskBook, id: \.self) { line in
+            Text("EXPOSURE").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
+            ForEach(exposureLines, id: \.self) { line in
                 HStack(alignment: .top, spacing: 8) {
                     Circle().fill(Theme.ink).frame(width: 5, height: 5).padding(.top, 6)
+                    Text(line).font(.system(size: 13))
+                }
+            }
+            Text("HEDGING THE MARKET RISK").font(.system(size: 10, weight: .bold))
+                .foregroundStyle(.secondary).padding(.top, 6)
+            ForEach(hedgeLines, id: \.self) { line in
+                HStack(alignment: .top, spacing: 8) {
+                    Circle().fill(Theme.bond).frame(width: 5, height: 5).padding(.top, 6)
                     Text(line).font(.system(size: 13))
                 }
             }
         }
     }
 
-    private var deskBook: [String] {
-        var lines = [String]()
+    /// What the issuing desk is left holding — the mirror of the note.
+    private var exposureLines: [String] {
+        var out = [String]()
         if spec.downside == .kiPut {
-            lines.append("Desk is long the KI put the client sold — vega concentrated at the \(Fmt.pct(spec.protection, 0)) strike\(spec.protObs == .european ? "" : "; monitoring makes the put richer and the knock stickier").")
+            let obs = spec.protObs == .european ? "European"
+                : spec.protObs == .daily ? "daily-monitored (bridge) — richest and stickiest"
+                : "\(spec.protObs == .monthly ? "monthly" : "quarterly")-monitored"
+            out.append("Long the client's \(Fmt.pct(spec.protection, 0)) KI put, \(obs). Vega and gamma concentrate at that strike.")
         }
         if spec.downside == .buffer {
-            lines.append("Desk is long the \(spec.gearedBuffer ? "geared " : "")buffer put at \(Fmt.pct(spec.protection, 0))\(spec.gearedBuffer ? " — full downside is reachable, so the put is larger" : "").")
+            out.append("Long the \(spec.gearedBuffer ? "geared " : "")buffer put struck \(Fmt.pct(spec.protection, 0))\(spec.gearedBuffer ? " — full downside reachable" : "").")
         }
         if spec.coupon == .contingent {
-            lines.append("Short a digital ladder at \(Fmt.pct(spec.couponBarrier, 0)) — pin risk on each \(spec.couponObs.rawValue.lowercased()) observation\(spec.memory ? "; memory chains the digitals" : "").")
-        }
-        if spec.snowball {
-            lines.append("Snowball at \(Fmt.pct(spec.snowballRate)) concentrates the coupon into the call date — one large digital instead of a strip.")
-        }
-        if spec.coupon == .contingent && spec.couponBarrierObs == .dailyMonitored {
-            lines.append("Daily-observed coupon barrier turns the digital ladder one-touch — coupons are harder, and the same rate is worth less to the holder.")
-        }
-        if spec.lockIn {
-            lines.append("Lock-in at \(Fmt.pct(spec.lockLevel, 0)): one touch extinguishes the desk's long KI put — the put dies on a good print.")
-        }
-        if spec.secondChance && spec.downside == .kiPut {
-            lines.append("Second chance pulls the American knock back toward European — the desk's put cheapens and the note richens.")
+            out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", one-touch observed" : "") — pin risk every observation date.")
         }
         if spec.call != .none {
-            lines.append("Negative gamma just under the \(Fmt.pct(spec.callTrigger, 0)) trigger into \(spec.callObs.rawValue.lowercased()) observations — calling extinguishes coupon-rich states.")
+            out.append("Negative gamma under the \(Fmt.pct(spec.callTrigger, 0)) \(spec.call == .autocall ? "autocall" : "issuer-call") trigger into \(spec.callObs.rawValue.lowercased()) observations — a print through it extinguishes the coupon-rich states.")
         }
-        if spec.call != .none && spec.triggerStep > 0 {
-            lines.append("Step-down trigger: later digitals sit lower — calls come easier and the note de-risks itself over time.")
-        }
-        if spec.members.count > 1 {
-            lines.append(spec.basket == .worstOf
-                ? "Worst-of ×\(spec.members.count) = short correlation; the corr sensitivity recycles against dispersion books."
-                : "Weighted basket: diversification cheapens the options — the desk is long correlation here.")
-        }
-        if spec.averaging != .none {
-            lines.append("Asian tail (\(spec.averaging.fixings) fixings) dampens final-date variance — cheapens the KI put and trims terminal gamma.")
+        if spec.members.count > 1 && spec.basket == .worstOf {
+            out.append("Short correlation ×\(spec.members.count) — the chronic worst-of issuance position. The +0.05ρ number in the risk block sizes it.")
         }
         if spec.upside == .absolute {
-            lines.append("Absolute upside adds a down-and-out put owned by the client — the desk is short realized absolute value while the barrier survives.")
+            out.append("Short realized absolute value while the barrier survives — the client owns a down-and-out put on top of the upside.")
         }
-        if spec.upside == .linear || spec.upside == .digital || spec.upside == .digitalPlus {
-            lines.append("Desk is short the upside leg — standard index vega, usually recycled against the income book.")
+        if spec.lockIn {
+            out.append("The KI put dies if \(Fmt.pct(spec.lockLevel, 0)) prints on an observation (lock-in) — hedge decays toward that touch.")
         }
-        if spec.minRedemption > 0 {
-            lines.append("Redemption floored at \(Fmt.pct(spec.minRedemption, 0)): the desk is short a put spread rather than the full tail.")
+        if out.isEmpty { out.append("Pure funding note — rates and issuer-spread risk only.") }
+        return out
+    }
+
+    /// Concrete strategies for the exposures above, sized off the live Greeks.
+    private var hedgeLines: [String] {
+        var out = [String]()
+        let hasIndex = spec.members.contains { ["SPX", "NDX", "RTY", "INDU", "QQQ", "SPY", "IWM"].contains($0) }
+        let instruments = hasIndex ? "index futures (ES/NQ/RTY) or SPY/QQQ" : "cash shares and single-stock options"
+        if let g = sens {
+            let side = g.delta >= 0 ? "Buy" : "Sell"
+            out.append("Delta: \(side) ≈ \(Fmt.usd0(abs(g.delta) * notional)) per $1,000 of notes across \(spec.members.joined(separator: "/")) via \(instruments). Re-strike after each observation; widen rebalancing bands near the trigger and barrier where gamma flips.")
+            if spec.downside != .par {
+                if g.vega < 0 {
+                    out.append("Vol: issuance leaves the desk long the \(Fmt.pct(spec.protection, 0)) wing — recycle by selling \(termStr(spec.termYears)) puts or put spreads near that strike (vanilla-vs-barrier basis stays), or net against growth-note flow that runs the book short vol.")
+                } else {
+                    out.append("Vol: the book is short vol here — buy back \(termStr(spec.termYears)) options near \(Fmt.pct(spec.protection, 0)) or source vega from income-note issuance.")
+                }
+            }
         }
-        if spec.chargesOn {
-            lines.append("The offer is mid less the cost of being wrong: the KI wing (skew), unreplicable digitals (overhedge), and unhedgeable correlation — that gap is the estimated-value discount clients see on term sheets.")
+        if spec.members.count > 1 && spec.basket == .worstOf {
+            out.append("Correlation: no listed hedge — reduce via short dispersion (sell single-name vol, buy index vol) or corr swaps where bid; otherwise warehouse and recycle against the dispersion desk.")
         }
-        lines.append("Funding at UST + \(Fmt.bp(spec.fundingSpread)) discounts every flow — the funding DV is the issuer's edge on the shelf.")
-        return lines
+        if spec.coupon == .contingent || spec.call != .none || (spec.downside == .kiPut && spec.protObs != .european) {
+            out.append("Digitals & barriers: replicate as \(Fmt.pct(spec.barrierShift))-wide option spreads (the overhedge lever *is* the replication width); pre-position delta into observation dates instead of chasing the pin on the day.")
+        }
+        out.append("Rates: swap the fixed funding leg and key-rate the \(termStr(spec.termYears)) pillar — the curve chart marks the hedge tenor; the funding DV per 10bp sizes it.")
+        return out
     }
 
     // MARK: repricing
@@ -748,7 +926,7 @@ public struct DeskView: View {
     private func reprice() {
         let snapshot = spec
         pricing = true
-        ladder = []; ledger = []; charges = nil
+        ladder = []; ledger = []; charges = nil; events = []
         Task.detached(priority: .userInitiated) {
             let r = Engine.price(snapshot)
             let g = Engine.sensitivities(snapshot)
@@ -757,11 +935,13 @@ public struct DeskView: View {
                 self.pricing = false
             }
             let ch = Engine.charges(snapshot, midValue: r.value, vega: g.vega)
+            await MainActor.run { if snapshot == self.spec { self.charges = ch } }
+            let ev = Engine.eventScenarios(snapshot)
+            await MainActor.run { if snapshot == self.spec { self.events = ev } }
             let lad = Engine.spotLadder(snapshot)
+            await MainActor.run { if snapshot == self.spec { self.ladder = lad } }
             let led = Engine.featureLedger(snapshot)
-            await MainActor.run {
-                if snapshot == self.spec { self.charges = ch; self.ladder = lad; self.ledger = led }
-            }
+            await MainActor.run { if snapshot == self.spec { self.ledger = led } }
         }
     }
 }
