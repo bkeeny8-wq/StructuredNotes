@@ -65,7 +65,9 @@ struct StatCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 3) {
             Text(title.uppercased()).font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 19, weight: .bold, design: .monospaced)).foregroundStyle(color)
+            Text(value)
+            .lineLimit(1)
+            .minimumScaleFactor(0.55).font(.system(size: 19, weight: .bold, design: .monospaced)).foregroundStyle(color)
             if !sub.isEmpty { Text(sub).font(.system(size: 11)).foregroundStyle(.secondary) }
         }
         .padding(11)
@@ -202,5 +204,34 @@ struct BlockCard<Content: View>: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white, in: RoundedRectangle(cornerRadius: 12))
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.rule))
+    }
+}
+
+enum OutputTab: String, CaseIterable, Identifiable {
+    case note = "Note", risk = "Risk", math = "The math"
+    var id: String { rawValue }
+}
+
+/// Capsule pill selector for the output column.
+struct PillSelector: View {
+    @Binding var tab: OutputTab
+    var body: some View {
+        HStack(spacing: 4) {
+            ForEach(OutputTab.allCases) { t in
+                Button {
+                    tab = t
+                } label: {
+                    Text(t.rawValue)
+                        .font(.system(size: 13, weight: tab == t ? .bold : .regular))
+                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .frame(maxWidth: .infinity)
+                        .background(tab == t ? Theme.ink : .clear, in: Capsule())
+                        .foregroundStyle(tab == t ? .white : Theme.ink)
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .padding(4)
+        .background(Color(red: 0.93, green: 0.92, blue: 0.89), in: Capsule())
     }
 }

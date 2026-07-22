@@ -145,6 +145,8 @@ public struct Instrument: Hashable, Sendable {
     public var digital: Double
     public var digitalStrike: Double        // digital pays when final ≥ this; < 100% = in-the-money
     public var digiPlusLeverage: Double     // digi-plus: max(digital, leverage × gain), leverage ≥ 1
+    public var absoluteKO: Double           // absolute-return zone dies below this level
+    public var absParticipation: Double     // participation on the absolute (down) side
     // downside block
     public var downside: DownsideKind
     public var protection: Double
@@ -185,6 +187,7 @@ public struct Instrument: Hashable, Sendable {
         lockIn: Bool, lockLevel: Double,
         upside: UpsideKind, participation: Double, cap: Double?, digital: Double,
         digitalStrike: Double, digiPlusLeverage: Double,
+        absoluteKO: Double, absParticipation: Double,
         downside: DownsideKind, protection: Double, gearedBuffer: Bool,
         minRedemption: Double, secondChance: Bool, secondChanceLevel: Double,
         protObs: ProtectionObs,
@@ -203,6 +206,7 @@ public struct Instrument: Hashable, Sendable {
         self.lockIn = lockIn; self.lockLevel = lockLevel
         self.upside = upside; self.participation = participation; self.cap = cap; self.digital = digital
         self.digitalStrike = digitalStrike; self.digiPlusLeverage = digiPlusLeverage
+        self.absoluteKO = absoluteKO; self.absParticipation = absParticipation
         self.downside = downside; self.protection = protection; self.gearedBuffer = gearedBuffer
         self.minRedemption = minRedemption; self.secondChance = secondChance; self.secondChanceLevel = secondChanceLevel
         self.protObs = protObs
@@ -230,6 +234,7 @@ extension Instrument {
         lockIn: false, lockLevel: 0.90,
         upside: .none, participation: 1.0, cap: nil, digital: 0.30,
         digitalStrike: 1.0, digiPlusLeverage: 1.0,
+        absoluteKO: 0.80, absParticipation: 1.0,
         downside: .par, protection: 0.60, gearedBuffer: false,
         minRedemption: 0, secondChance: false, secondChanceLevel: 0.60,
         protObs: .european,

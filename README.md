@@ -1,4 +1,4 @@
-# Structured Notes — instrument builder (v16, always-price)
+# Structured Notes — instrument builder (v19, always-price)
 
 iPad SwiftUI **framework** for experienced users. Every dial is an input; the output is the note's **model value as a percentage of par**.
 
@@ -14,11 +14,12 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 | `StructuredNotesDesk` | Framework — models, always-price engine, builder UI |
 | `StructuredNotesDeskExample` | Host app (`import StructuredNotesDesk` → `DeskView()`) |
 
-## What’s new in v16
+## What’s new in v19
 
-- **Call premium** (p.a.) — paid at call on top of par; nothing at maturity (unlike snowball)
-- PricingResult **`premiumLeg`** in the decomposition, algebra, and coupon/premium pie slice
-- Continues v14/v13: digital strike, digi-plus leverage, UF fee, daily KI bridge, event risk
+- **Note / Risk / The math** output tabs with pill selector
+- **Call timing distribution** (`PricingResult.callDist` / `CallBucket`) — risk-neutral path frequencies by exit time
+- Expandable **glossary** of desk symbols and terms
+- Continues v18 hedge sheet and prior economics dials
 
 ## Layout
 

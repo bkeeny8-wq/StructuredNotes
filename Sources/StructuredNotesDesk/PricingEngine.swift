@@ -12,6 +12,16 @@
 
 import Foundation
 
+public struct CallBucket: Equatable, Identifiable, Sendable {
+    public var id: Double { t }
+    public var t: Double
+    public var p: Double
+
+    public init(t: Double, p: Double) {
+        self.t = t; self.p = p
+    }
+}
+
 public struct PricingResult: Equatable, Sendable {
     public var value: Double         // per $1 of par
     public var parLeg: Double
@@ -25,13 +35,15 @@ public struct PricingResult: Equatable, Sendable {
     public var probLoss: Double
     public var expectedLife: Double
     public var avgCoupons: Double
+    public var callDist: [CallBucket]
 
-    public init(value: Double, parLeg: Double, couponLeg: Double, premiumLeg: Double, upsideLeg: Double, downsideLeg: Double, qFactor: Double, upUnit: Double, probCalled: Double, probLoss: Double, expectedLife: Double, avgCoupons: Double) {
+    public init(value: Double, parLeg: Double, couponLeg: Double, premiumLeg: Double, upsideLeg: Double, downsideLeg: Double, qFactor: Double, upUnit: Double, probCalled: Double, probLoss: Double, expectedLife: Double, avgCoupons: Double, callDist: [CallBucket]) {
         self.value = value; self.parLeg = parLeg; self.couponLeg = couponLeg; self.premiumLeg = premiumLeg
         self.upsideLeg = upsideLeg; self.downsideLeg = downsideLeg
         self.qFactor = qFactor; self.upUnit = upUnit
         self.probCalled = probCalled; self.probLoss = probLoss
         self.expectedLife = expectedLife; self.avgCoupons = avgCoupons
+        self.callDist = callDist
     }
 }
 
@@ -194,7 +206,7 @@ public enum Engine {
             }
         case .absolute:
             if z >= 1 { up = min(s.participation * (z - 1), max(capV - 1, 0)) }
-            else if alive { up = s.participation * (1 - z) }
+            else if alive && z >= s.absoluteKO { up = s.absParticipation * (1 - z) }
         }
         var loss = 0.0
         switch locked ? DownsideKind.par : s.downside {
@@ -212,6 +224,7 @@ public enum Engine {
     }
 
     struct SimOut {
+        var callSteps: [Double] = []
         var pv = 0.0, parPV = 0.0, cpnPV = 0.0, premPV = 0.0, upPV = 0.0, lossPV = 0.0
         var q = 0.0, uUnit = 0.0
         var called = 0.0, loss = 0.0, life = 0.0, coupons = 0.0
@@ -219,6 +232,7 @@ public enum Engine {
 
     static func simulate(_ s: Instrument,
                          spotScale: Double = 1, volBump: Double = 0,
+                         bumpAsset: Int? = nil,
                          paths: Int = fullPaths) -> SimOut {
         let assets = Market.assets(for: s.members)
         let nA = min(assets.count, maxAssets)
@@ -247,8 +261,9 @@ public enum Engine {
         let sqdtSub = dtSub > 0 ? dtSub.squareRoot() : 0
 
         var vols = [Double](), qv = [Double](), qvSub = [Double](), divsArr = [Double]()
-        for a in assets.prefix(nA) {
-            let v = max(0.01, a.vol + s.volShift + volBump)
+        for (j, a) in assets.prefix(nA).enumerated() {
+            let applies = bumpAsset == nil || bumpAsset == j
+            let v = max(0.01, a.vol + s.volShift + (applies ? volBump : 0))
             vols.append(v); divsArr.append(a.div)
             qv.append((a.div + v * v / 2) * dt)
             qvSub.append((a.div + v * v / 2) * dtSub)
@@ -284,9 +299,12 @@ public enum Engine {
         }
 
         var out = SimOut()
+        out.callSteps = [Double](repeating: 0, count: nSteps + 1)
         var closes = [Double](repeating: 0, count: 21 * nA)
         for pth in 0..<paths {
-            var x = [Double](repeating: spotScale, count: nA)
+            var x = [Double](repeating: 1, count: nA)
+            if let b = bumpAsset { if b < nA { x[b] = spotScale } }
+            else { for j in 0..<nA { x[j] = spotScale } }
             var missed = 0
             var knocked = false
             var periodClean = true
@@ -387,6 +405,7 @@ public enum Engine {
                             cpv += s.snowballRate * t * df; qacc += t * df; out.coupons += 1
                         }
                         out.called += 1; out.life += t
+                        out.callSteps[i] += 1
                         break
                     }
                 }
@@ -418,6 +437,7 @@ public enum Engine {
         out.pv /= n; out.parPV /= n; out.cpnPV /= n; out.premPV /= n; out.upPV /= n; out.lossPV /= n
         out.q /= n; out.uUnit /= n
         out.called /= n; out.loss /= n; out.life /= n; out.coupons /= n
+        for i in 0..<out.callSteps.count { out.callSteps[i] /= n }
         return out
     }
 
@@ -428,7 +448,39 @@ public enum Engine {
                              upsideLeg: o.upPV, downsideLeg: o.lossPV,
                              qFactor: o.q, upUnit: o.uUnit,
                              probCalled: o.called, probLoss: o.loss,
-                             expectedLife: o.life, avgCoupons: o.coupons)
+                             expectedLife: o.life, avgCoupons: o.coupons,
+                             callDist: {
+                                 let dt = s.termYears / Double(max(o.callSteps.count - 1, 1))
+                                 let raw = o.callSteps.enumerated().compactMap { (i, p) -> CallBucket? in
+                                     p > 0.002 ? CallBucket(t: Double(i) * dt, p: p) : nil
+                                 }
+                                 if raw.count <= 5 { return raw }
+                                 let head = Array(raw.prefix(4))
+                                 let tail = raw.dropFirst(4).reduce(0) { $0 + $1.p }
+                                 return head + [CallBucket(t: raw[4].t, p: tail)]
+                             }())
+    }
+
+    public struct AssetRisk: Equatable, Identifiable, Sendable {
+        public var id: String { ticker }
+        public var ticker: String
+        public var delta: Double     // per 1% move in this name alone, $/par
+        public var vega: Double      // per 1 vol pt in this name alone
+    
+        public init(ticker: String, delta: Double, vega: Double) {
+            self.ticker = ticker; self.delta = delta; self.vega = vega
+        }
+}
+
+    /// Bump each member alone, the others held flat — the hedge sheet.
+    public static func perAssetRisk(_ s: Instrument) -> [AssetRisk] {
+        s.members.enumerated().map { (j, tkr) in
+            let dU = simulate(s, spotScale: 1.01, bumpAsset: j, paths: fastPaths).pv
+            let dD = simulate(s, spotScale: 0.99, bumpAsset: j, paths: fastPaths).pv
+            let vU = simulate(s, volBump: 0.01, bumpAsset: j, paths: fastPaths).pv
+            let vD = simulate(s, volBump: -0.01, bumpAsset: j, paths: fastPaths).pv
+            return AssetRisk(ticker: tkr, delta: (dU - dD) / 0.02, vega: (vU - vD) / 2)
+        }
     }
 
     public static func sensitivities(_ s: Instrument) -> Sensitivities {
@@ -473,6 +525,7 @@ public enum Engine {
         if s2.lockIn { s2.lockLevel += s.barrierShift }
         if s2.secondChance { s2.secondChanceLevel += s.barrierShift }
         if s2.upside == .digital || s2.upside == .digitalPlus { s2.digitalStrike += s.barrierShift }
+        if s2.upside == .absolute { s2.absoluteKO += s.barrierShift }
         let over = max(baseF.pv - simulate(s2, paths: fastPaths).pv, 0)
         var corr = 0.0
         if s.members.count > 1 {
@@ -610,6 +663,8 @@ public enum Engine {
                 let lev = s.upside == .digitalPlus && s.digiPlusLeverage > 1.001
                     ? ", \(String(format: "%.2g", s.digiPlusLeverage))× above" : ""
                 upLabel = "+ \(s.upside.rawValue.lowercased())\(itm)\(lev) leg"
+            } else if s.upside == .absolute {
+                upLabel = "+ absolute leg (KO \(Int(s.absoluteKO * 100))%, \(String(format: "%.2g", s.absParticipation))× down / \(String(format: "%.2g", s.participation))× up)"
             } else {
                 upLabel = "+ \(s.upside.rawValue.lowercased()) leg"
             }
@@ -617,6 +672,7 @@ public enum Engine {
                 $0.upside = s.upside; $0.participation = s.participation
                 $0.cap = s.cap; $0.digital = s.digital
                 $0.digitalStrike = s.digitalStrike; $0.digiPlusLeverage = s.digiPlusLeverage
+                $0.absoluteKO = s.absoluteKO; $0.absParticipation = s.absParticipation
             }
         }
         if s.coupon == .contingent {
