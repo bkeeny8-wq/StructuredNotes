@@ -242,6 +242,13 @@ public struct DeskView: View {
                     LeverRow(label: "Trigger step-down", display: spec.triggerStep == 0 ? "off" : String(format: "−%.0f%%/yr", spec.triggerStep * 100),
                              value: $spec.triggerStep, range: 0...0.10, step: 0.005)
                 }
+                LeverRow(label: "Call premium (p.a., paid at call)",
+                         display: spec.callPremium == 0 ? "off" : Fmt.pct(spec.callPremium),
+                         value: $spec.callPremium, range: 0...0.50, step: 0.0025)
+                if spec.callPremium > 0 {
+                    Text("Paid only if called — unlike snowball, nothing at maturity.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
                 LeverRow(label: "Non-call period", display: String(format: "%.0fm", spec.nonCallMonths),
                          value: $spec.nonCallMonths, range: 0...24, step: 1)
                 if spec.coupon != .none {
@@ -296,6 +303,14 @@ public struct DeskView: View {
             if [.digital, .digitalPlus].contains(spec.upside) {
                 LeverRow(label: "Digital level", display: Fmt.pct(spec.digital, 0),
                          value: $spec.digital, range: 0.05...1.0, step: 0.01)
+                LeverRow(label: "Digital strike (ITM below 100%)",
+                         display: Fmt.pct(spec.digitalStrike, 0),
+                         value: $spec.digitalStrike, range: 0.5...1.1, step: 0.01)
+                if spec.upside == .digitalPlus {
+                    LeverRow(label: "Leverage above the digital",
+                             display: String(format: "%.2f×", spec.digiPlusLeverage),
+                             value: $spec.digiPlusLeverage, range: 1...3, step: 0.05)
+                }
             }
         }
     }
@@ -596,11 +611,19 @@ public struct DeskView: View {
         if spec.call != .none {
             var call = "\(spec.call == .autocall ? "autocall" : "issuer call") \(Fmt.pct(spec.callTrigger, 0)) (\(spec.callObs.rawValue.lowercased()))"
             if spec.triggerStep > 0 { call += " −\(Int(spec.triggerStep * 100))%/yr" }
+            if spec.callPremium > 0 { call += " + \(Fmt.pct(spec.callPremium)) premium" }
             call += " after \(String(format: "%.0f", spec.nonCallMonths))m"
             parts.append(call)
         }
         if spec.upside != .none {
-            parts.append(spec.upside.rawValue.lowercased() + (spec.cap != nil ? " capped" : ""))
+            var up = spec.upside.rawValue.lowercased() + (spec.cap != nil ? " capped" : "")
+            if [.digital, .digitalPlus].contains(spec.upside) {
+                if spec.digitalStrike < 0.999 { up += " ≥\(Fmt.pct(spec.digitalStrike, 0)) (ITM)" }
+                if spec.upside == .digitalPlus && spec.digiPlusLeverage > 1.001 {
+                    up += ", \(String(format: "%.2g", spec.digiPlusLeverage))× above"
+                }
+            }
+            parts.append(up)
         }
         switch spec.downside {
         case .par: parts.append("full protection")
@@ -652,6 +675,9 @@ public struct DeskView: View {
         Card(title: "Trader decomposition (per $1,000)") {
             if let r = result {
                 LegRow(label: "Par leg — principal at exit", value: "+" + Fmt.usd0(r.parLeg * notional), color: Theme.bond)
+                if r.premiumLeg > 0.0005 {
+                    LegRow(label: "Call premium leg", value: "+" + Fmt.usd0(r.premiumLeg * notional), color: Theme.amber)
+                }
                 if r.couponLeg > 0.0005 {
                     LegRow(label: spec.snowball ? "Coupon accrual (snowball)" : "Coupon strip",
                            value: "+" + Fmt.usd0(r.couponLeg * notional), color: Theme.amber)
@@ -665,7 +691,7 @@ public struct DeskView: View {
                 LegRow(label: "Model value", value: Fmt.pct(r.value, 2))
                 CapitalStack(segs: [
                     .init(name: "Net principal", frac: r.parLeg - r.downsideLeg, color: Theme.bond),
-                    .init(name: "Coupons", frac: r.couponLeg, color: Theme.amber),
+                    .init(name: "Coupons", frac: r.couponLeg + r.premiumLeg, color: Theme.amber),
                     .init(name: "Upside", frac: r.upsideLeg, color: Theme.opt),
                     .init(name: "Issue-at-par gap", frac: max(1 - r.value, 0), color: Theme.fee),
                 ], notional: notional)
@@ -701,6 +727,9 @@ public struct DeskView: View {
             out.append("Q = E[Σ df at paid dates] = \(String(format: "%.3f", r.qFactor))")
             let rate = spec.snowball ? spec.snowballRate : spec.couponRate
             out.append("coupon leg = \(spec.snowball ? "r_sb" : "c")·Q = \(Fmt.pct(rate))·\(String(format: "%.3f", r.qFactor)) = \(Fmt.usd0(r.couponLeg * notional))")
+        }
+        if r.premiumLeg > 0.0005 {
+            out.append("premium leg = E[df·p_call·τ·1{called}] = \(Fmt.usd0(r.premiumLeg * notional))")
         }
         if spec.upside != .none {
             if (spec.upside == .linear || spec.upside == .absolute), r.upUnit > 1e-9 {
@@ -880,10 +909,17 @@ public struct DeskView: View {
             out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", one-touch observed" : "") — pin risk every observation date.")
         }
         if spec.call != .none {
-            out.append("Negative gamma under the \(Fmt.pct(spec.callTrigger, 0)) \(spec.call == .autocall ? "autocall" : "issuer-call") trigger into \(spec.callObs.rawValue.lowercased()) observations — a print through it extinguishes the coupon-rich states.")
+            let prem = spec.callPremium > 0 ? " The \(Fmt.pct(spec.callPremium))/yr call premium enlarges the trigger digital." : ""
+            out.append("Negative gamma under the \(Fmt.pct(spec.callTrigger, 0)) \(spec.call == .autocall ? "autocall" : "issuer-call") trigger into \(spec.callObs.rawValue.lowercased()) observations — a print through it extinguishes the coupon-rich states.\(prem)")
         }
         if spec.members.count > 1 && spec.basket == .worstOf {
             out.append("Short correlation ×\(spec.members.count) — the chronic worst-of issuance position. The +0.05ρ number in the risk block sizes it.")
+        }
+        if [.digital, .digitalPlus].contains(spec.upside) {
+            let itm = spec.digitalStrike < 0.999 ? " struck \(Fmt.pct(spec.digitalStrike, 0)) in-the-money" : ""
+            let lev = spec.upside == .digitalPlus && spec.digiPlusLeverage > 1.001
+                ? " with \(String(format: "%.2g", spec.digiPlusLeverage))× calls layered above" : ""
+            out.append("Short the \(Fmt.pct(spec.digital, 0)) digital\(itm)\(lev) — one large European pin at maturity.")
         }
         if spec.upside == .absolute {
             out.append("Short realized absolute value while the barrier survives — the client owns a down-and-out put on top of the upside.")

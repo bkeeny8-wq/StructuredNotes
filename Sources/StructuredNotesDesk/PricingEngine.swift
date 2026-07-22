@@ -16,6 +16,7 @@ public struct PricingResult: Equatable, Sendable {
     public var value: Double         // per $1 of par
     public var parLeg: Double
     public var couponLeg: Double     // = couponRate × qFactor
+    public var premiumLeg: Double    // call premium paid at call
     public var upsideLeg: Double     // = participation × upUnit for linear/absolute
     public var downsideLeg: Double
     public var qFactor: Double
@@ -25,8 +26,8 @@ public struct PricingResult: Equatable, Sendable {
     public var expectedLife: Double
     public var avgCoupons: Double
 
-    public init(value: Double, parLeg: Double, couponLeg: Double, upsideLeg: Double, downsideLeg: Double, qFactor: Double, upUnit: Double, probCalled: Double, probLoss: Double, expectedLife: Double, avgCoupons: Double) {
-        self.value = value; self.parLeg = parLeg; self.couponLeg = couponLeg
+    public init(value: Double, parLeg: Double, couponLeg: Double, premiumLeg: Double, upsideLeg: Double, downsideLeg: Double, qFactor: Double, upUnit: Double, probCalled: Double, probLoss: Double, expectedLife: Double, avgCoupons: Double) {
+        self.value = value; self.parLeg = parLeg; self.couponLeg = couponLeg; self.premiumLeg = premiumLeg
         self.upsideLeg = upsideLeg; self.downsideLeg = downsideLeg
         self.qFactor = qFactor; self.upUnit = upUnit
         self.probCalled = probCalled; self.probLoss = probLoss
@@ -186,8 +187,11 @@ public enum Engine {
         case .none: up = 0
         case .linear: up = min(s.participation * max(z - 1, 0), max(capV - 1, 0))
         case .digital, .digitalPlus:
-            let strike = s.downside == .par ? 1.0 : s.protection
-            if z >= strike { up = s.upside == .digitalPlus ? max(s.digital, z - 1) : s.digital }
+            if z >= s.digitalStrike {
+                up = s.upside == .digitalPlus
+                    ? max(s.digital, s.digiPlusLeverage * max(z - 1, 0))
+                    : s.digital
+            }
         case .absolute:
             if z >= 1 { up = min(s.participation * (z - 1), max(capV - 1, 0)) }
             else if alive { up = s.participation * (1 - z) }
@@ -208,7 +212,7 @@ public enum Engine {
     }
 
     struct SimOut {
-        var pv = 0.0, parPV = 0.0, cpnPV = 0.0, upPV = 0.0, lossPV = 0.0
+        var pv = 0.0, parPV = 0.0, cpnPV = 0.0, premPV = 0.0, upPV = 0.0, lossPV = 0.0
         var q = 0.0, uUnit = 0.0
         var called = 0.0, loss = 0.0, life = 0.0, coupons = 0.0
     }
@@ -287,7 +291,7 @@ public enum Engine {
             var knocked = false
             var periodClean = true
             var locked = false
-            var cpv = 0.0, parpv = 0.0, uppv = 0.0, losspv = 0.0
+            var cpv = 0.0, parpv = 0.0, prempv = 0.0, uppv = 0.0, losspv = 0.0
             var qacc = 0.0, uacc = 0.0
             var xPrev = x
             var zPrev = perf(x, s)
@@ -378,6 +382,7 @@ public enum Engine {
                     let trig = s.callTrigger - s.triggerStep * max(0, t - s.nonCallYears)
                     if zNow >= trig {
                         parpv += df
+                        prempv += s.callPremium * t * df
                         if couponActive && s.snowball {
                             cpv += s.snowballRate * t * df; qacc += t * df; out.coupons += 1
                         }
@@ -404,12 +409,13 @@ public enum Engine {
                     if lost { out.loss += 1 }
                 }
             }
-            out.cpnPV += cpv; out.parPV += parpv; out.upPV += uppv; out.lossPV += losspv
+            out.cpnPV += cpv; out.parPV += parpv; out.premPV += prempv
+            out.upPV += uppv; out.lossPV += losspv
             out.q += qacc; out.uUnit += uacc
-            out.pv += cpv + parpv + uppv - losspv
+            out.pv += cpv + parpv + prempv + uppv - losspv
         }
         let n = Double(paths)
-        out.pv /= n; out.parPV /= n; out.cpnPV /= n; out.upPV /= n; out.lossPV /= n
+        out.pv /= n; out.parPV /= n; out.cpnPV /= n; out.premPV /= n; out.upPV /= n; out.lossPV /= n
         out.q /= n; out.uUnit /= n
         out.called /= n; out.loss /= n; out.life /= n; out.coupons /= n
         return out
@@ -418,7 +424,7 @@ public enum Engine {
     public static func price(_ s: Instrument, paths: Int = fullPaths) -> PricingResult {
         let o = simulate(s, paths: paths)
         return PricingResult(value: o.pv,
-                             parLeg: o.parPV, couponLeg: o.cpnPV,
+                             parLeg: o.parPV, couponLeg: o.cpnPV, premiumLeg: o.premPV,
                              upsideLeg: o.upPV, downsideLeg: o.lossPV,
                              qFactor: o.q, upUnit: o.uUnit,
                              probCalled: o.called, probLoss: o.loss,
@@ -466,6 +472,7 @@ public enum Engine {
         if s2.coupon == .contingent { s2.couponBarrier = min(1.1, s2.couponBarrier + s.barrierShift) }
         if s2.lockIn { s2.lockLevel += s.barrierShift }
         if s2.secondChance { s2.secondChanceLevel += s.barrierShift }
+        if s2.upside == .digital || s2.upside == .digitalPlus { s2.digitalStrike += s.barrierShift }
         let over = max(baseF.pv - simulate(s2, paths: fastPaths).pv, 0)
         var corr = 0.0
         if s.members.count > 1 {
@@ -555,6 +562,7 @@ public enum Engine {
         b.protObs = .european; b.averaging = .none
         b.call = .none; b.memory = false; b.snowball = false; b.triggerStep = 0
         b.couponBarrierObs = .onPaymentDate
+        b.callPremium = 0
         b.secondChance = false; b.lockIn = false
         b.upside = .none
         if b.coupon == .contingent { b.coupon = .guaranteed }
@@ -596,9 +604,19 @@ public enum Engine {
             add("+ Asian tail (\(s.averaging.fixings) daily fixings)") { $0.averaging = s.averaging }
         }
         if s.upside != .none {
-            add("+ \(s.upside.rawValue.lowercased()) leg") {
+            let upLabel: String
+            if s.upside == .digital || s.upside == .digitalPlus {
+                let itm = s.digitalStrike < 0.999 ? " ≥\(Int(s.digitalStrike * 100))%" : ""
+                let lev = s.upside == .digitalPlus && s.digiPlusLeverage > 1.001
+                    ? ", \(String(format: "%.2g", s.digiPlusLeverage))× above" : ""
+                upLabel = "+ \(s.upside.rawValue.lowercased())\(itm)\(lev) leg"
+            } else {
+                upLabel = "+ \(s.upside.rawValue.lowercased()) leg"
+            }
+            add(upLabel) {
                 $0.upside = s.upside; $0.participation = s.participation
                 $0.cap = s.cap; $0.digital = s.digital
+                $0.digitalStrike = s.digitalStrike; $0.digiPlusLeverage = s.digiPlusLeverage
             }
         }
         if s.coupon == .contingent {
@@ -616,6 +634,11 @@ public enum Engine {
             add("+ \(s.call == .autocall ? "autocall" : "issuer call (bound)")") {
                 $0.call = s.call; $0.callObs = s.callObs
                 $0.callTrigger = s.callTrigger; $0.nonCallMonths = s.nonCallMonths
+            }
+        }
+        if s.call != .none && s.callPremium > 0 {
+            add("+ call premium \(String(format: "%.1f", s.callPremium * 100))%/yr") {
+                $0.callPremium = s.callPremium
             }
         }
         if s.call != .none && s.triggerStep > 0 {

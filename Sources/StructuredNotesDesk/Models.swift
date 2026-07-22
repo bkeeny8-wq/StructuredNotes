@@ -132,6 +132,7 @@ public struct Instrument: Hashable, Sendable {
     public var callObs: CallObs
     public var callTrigger: Double
     public var triggerStep: Double          // step-down per year after the non-call period
+    public var callPremium: Double          // p.a., paid at call on top of par; nothing at maturity
     public var nonCallMonths: Double        // monthly slider
     public var snowball: Bool               // coupons accrue and pay at call
     public var snowballRate: Double         // the accrual rate is its own input
@@ -142,6 +143,8 @@ public struct Instrument: Hashable, Sendable {
     public var participation: Double
     public var cap: Double?                 // nil = uncapped
     public var digital: Double
+    public var digitalStrike: Double        // digital pays when final ≥ this; < 100% = in-the-money
+    public var digiPlusLeverage: Double     // digi-plus: max(digital, leverage × gain), leverage ≥ 1
     // downside block
     public var downside: DownsideKind
     public var protection: Double
@@ -177,9 +180,11 @@ public struct Instrument: Hashable, Sendable {
         coupon: CouponStyle, couponRate: Double, couponObs: CouponObs,
         couponBarrier: Double, couponBarrierObs: BarrierObsStyle, memory: Bool,
         call: CallFeature, callObs: CallObs, callTrigger: Double, triggerStep: Double,
+        callPremium: Double,
         nonCallMonths: Double, snowball: Bool, snowballRate: Double,
         lockIn: Bool, lockLevel: Double,
         upside: UpsideKind, participation: Double, cap: Double?, digital: Double,
+        digitalStrike: Double, digiPlusLeverage: Double,
         downside: DownsideKind, protection: Double, gearedBuffer: Bool,
         minRedemption: Double, secondChance: Bool, secondChanceLevel: Double,
         protObs: ProtectionObs,
@@ -193,9 +198,11 @@ public struct Instrument: Hashable, Sendable {
         self.coupon = coupon; self.couponRate = couponRate; self.couponObs = couponObs
         self.couponBarrier = couponBarrier; self.couponBarrierObs = couponBarrierObs; self.memory = memory
         self.call = call; self.callObs = callObs; self.callTrigger = callTrigger; self.triggerStep = triggerStep
+        self.callPremium = callPremium
         self.nonCallMonths = nonCallMonths; self.snowball = snowball; self.snowballRate = snowballRate
         self.lockIn = lockIn; self.lockLevel = lockLevel
         self.upside = upside; self.participation = participation; self.cap = cap; self.digital = digital
+        self.digitalStrike = digitalStrike; self.digiPlusLeverage = digiPlusLeverage
         self.downside = downside; self.protection = protection; self.gearedBuffer = gearedBuffer
         self.minRedemption = minRedemption; self.secondChance = secondChance; self.secondChanceLevel = secondChanceLevel
         self.protObs = protObs
@@ -219,9 +226,10 @@ extension Instrument {
         coupon: .none, couponRate: 0.10, couponObs: .quarterly,
         couponBarrier: 0.70, couponBarrierObs: .onPaymentDate, memory: false,
         call: .none, callObs: .quarterly, callTrigger: 1.0,
-        triggerStep: 0, nonCallMonths: 6, snowball: false, snowballRate: 0.08,
+        triggerStep: 0, callPremium: 0, nonCallMonths: 6, snowball: false, snowballRate: 0.08,
         lockIn: false, lockLevel: 0.90,
         upside: .none, participation: 1.0, cap: nil, digital: 0.30,
+        digitalStrike: 1.0, digiPlusLeverage: 1.0,
         downside: .par, protection: 0.60, gearedBuffer: false,
         minRedemption: 0, secondChance: false, secondChanceLevel: 0.60,
         protObs: .european,

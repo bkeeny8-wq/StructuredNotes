@@ -1,4 +1,4 @@
-# Structured Notes — instrument builder (v13, always-price)
+# Structured Notes — instrument builder (v16, always-price)
 
 iPad SwiftUI **framework** for experienced users. Every dial is an input; the output is the note's **model value as a percentage of par**.
 
@@ -14,12 +14,11 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 | `StructuredNotesDesk` | Framework — models, always-price engine, builder UI |
 | `StructuredNotesDeskExample` | Host app (`import StructuredNotesDesk` → `DeskView()`) |
 
-## What’s new in v13
+## What’s new in v16
 
-- **Underwriting fee (UF)** dial — advisor + wholesaler; dealer offer stack shows issuer net proceeds and structuring margin vs offer
-- **Daily KI monitoring** via Brownian bridge (`ProtectionObs.daily`)
-- **Event risk** card — value/delta tabs around the first call observation and near-maturity KI cliff
-- Desk book split into **exposure** vs **hedging the market risk**
+- **Call premium** (p.a.) — paid at call on top of par; nothing at maturity (unlike snowball)
+- PricingResult **`premiumLeg`** in the decomposition, algebra, and coupon/premium pie slice
+- Continues v14/v13: digital strike, digi-plus leverage, UF fee, daily KI bridge, event risk
 
 ## Layout
 
