@@ -20,6 +20,7 @@ public struct DeskView: View {
     @State private var assetRisk: [Engine.AssetRisk] = []
     @State private var tab: OutputTab = .note
     @State private var glossaryTerm: String?
+    @State private var repriceTask: Task<Void, Never>?
     @State private var pricing = false
 
     private let notional = 1000.0
@@ -371,7 +372,7 @@ public struct DeskView: View {
     private var economicsBlock: some View {
         Card(title: "Rates & funding") {
             curveChart
-            Text("Drag the chart to reshape the UST curve — the nearest pillar snaps to your finger. The shaded band is the credit spread resting on top. Sourced: Treasury.gov via Slickcharts, 7/17/26.")
+            Text("Drag the chart to reshape the UST curve — the nearest pillar snaps to your finger. The shaded band is the credit spread resting on top. Sourced: Treasury.gov via Slickcharts, 7/22/26.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
             LeverRow(label: "Funding spread @ 1Y", display: Fmt.bp(spec.spreadShort),
                      value: $spec.spreadShort, range: 0...0.02, step: 0.0005)
@@ -1189,12 +1190,19 @@ public struct DeskView: View {
     // MARK: repricing
 
     private func reprice() {
+        repriceTask?.cancel()
         let snapshot = spec
         pricing = true
-        ladder = []; ledger = []; charges = nil; events = []; assetRisk = []
-        Task.detached(priority: .userInitiated) {
+        repriceTask = Task.detached(priority: .userInitiated) {
+            // debounce: coalesce slider/curve-drag ticks into one compute
+            try? await Task.sleep(nanoseconds: 120_000_000)
+            if Task.isCancelled { return }
+            await MainActor.run {
+                self.ladder = []; self.ledger = []; self.charges = nil
+                self.events = []; self.assetRisk = []
+            }
             let r = Engine.price(snapshot)
-            let g = Engine.sensitivities(snapshot)
+            let g = Engine.sensitivities(snapshot, mark: r.value)
             await MainActor.run {
                 if snapshot == self.spec { self.result = r; self.sens = g }
                 self.pricing = false

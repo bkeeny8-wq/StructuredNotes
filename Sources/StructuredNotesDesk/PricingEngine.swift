@@ -300,8 +300,16 @@ public enum Engine {
 
         var out = SimOut()
         out.callSteps = [Double](repeating: 0, count: nSteps + 1)
-        var closes = [Double](repeating: 0, count: 21 * nA)
-        for pth in 0..<paths {
+        let chunkCount = paths >= 512 ? 8 : 1
+        var partials = [SimOut](repeating: out, count: chunkCount)
+        partials.withUnsafeMutableBufferPointer { buf in
+            DispatchQueue.concurrentPerform(iterations: chunkCount) { chunk in
+                var out = SimOut()
+                out.callSteps = [Double](repeating: 0, count: nSteps + 1)
+                var closes = [Double](repeating: 0, count: 21 * nA)
+                let lo = paths * chunk / chunkCount
+                let hi = paths * (chunk + 1) / chunkCount
+                for pth in lo..<hi {
             var x = [Double](repeating: 1, count: nA)
             if let b = bumpAsset { if b < nA { x[b] = spotScale } }
             else { for j in 0..<nA { x[j] = spotScale } }
@@ -368,7 +376,7 @@ public enum Engine {
                         if u[base + (i - 1) * nA] < pHit { knocked = true }
                     }
                 }
-                xPrev = x; zPrev = zNow
+                if bridge { xPrev = x; zPrev = zNow }
                 if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
                 if s.lockIn && zNow >= s.lockLevel {
                     let lockObs = (callActive && i % callEvery == 0)
@@ -433,6 +441,17 @@ public enum Engine {
             out.q += qacc; out.uUnit += uacc
             out.pv += cpv + parpv + prempv + uppv - losspv
         }
+                buf[chunk] = out
+            }
+        }
+        for p in partials {
+            out.pv += p.pv; out.parPV += p.parPV; out.cpnPV += p.cpnPV
+            out.premPV += p.premPV; out.upPV += p.upPV; out.lossPV += p.lossPV
+            out.q += p.q; out.uUnit += p.uUnit
+            out.called += p.called; out.loss += p.loss
+            out.life += p.life; out.coupons += p.coupons
+            for i in 0..<out.callSteps.count { out.callSteps[i] += p.callSteps[i] }
+        }
         let n = Double(paths)
         out.pv /= n; out.parPV /= n; out.cpnPV /= n; out.premPV /= n; out.upPV /= n; out.lossPV /= n
         out.q /= n; out.uUnit /= n
@@ -483,20 +502,22 @@ public enum Engine {
         }
     }
 
-    public static func sensitivities(_ s: Instrument) -> Sensitivities {
-        let f: (Double, Double) -> Double = { simulate(s, spotScale: $0, volBump: $1).pv }
+    /// Greeks from fast-path CRN diffs; the headline mark (full paths) is
+    /// passed in so the displayed level and the diffs never disagree.
+    public static func sensitivities(_ s: Instrument, mark: Double) -> Sensitivities {
+        let f: (Double, Double) -> Double = { simulate(s, spotScale: $0, volBump: $1, paths: fastPaths).pv }
         let base = f(1, 0)
         let up = f(1.01, 0), dn = f(0.99, 0)
         var corr = 0.0
         if s.members.count > 1 {
             var s2 = s; s2.correlation = min(0.99, s.correlation + 0.05)
-            corr = simulate(s2).pv - base
+            corr = simulate(s2, paths: fastPaths).pv - base
         }
         var s3 = s; s3.spreadShort += 0.001; s3.spreadLong += 0.001
-        let fdv = simulate(s3).pv - base
+        let fdv = simulate(s3, paths: fastPaths).pv - base
         var s4 = s; s4.termYears = max(1.0 / 12.0, s.termYears - 1.0 / 12.0)
-        let theta = simulate(s4).pv - base
-        return Sensitivities(mark: base, delta: (up - dn) / 0.02, gamma: up + dn - 2 * base,
+        let theta = simulate(s4, paths: fastPaths).pv - base
+        return Sensitivities(mark: mark, delta: (up - dn) / 0.02, gamma: up + dn - 2 * base,
                              vega: (f(1, 0.01) - f(1, -0.01)) / 2,
                              corr: corr, fundingDV: fdv, theta1m: theta)
     }
@@ -544,10 +565,9 @@ public enum Engine {
 
     public static func spotLadder(_ s: Instrument) -> [LadderRow] {
         [0.55, 0.65, 0.75, 0.85, 0.95, 1.0, 1.1, 1.2].map { lvl in
-            let up = simulate(s, spotScale: lvl * 1.01, paths: fastPaths).pv
-            let dn = simulate(s, spotScale: lvl * 0.99, paths: fastPaths).pv
             let mk = simulate(s, spotScale: lvl, paths: fastPaths).pv
-            return LadderRow(spot: lvl, mark: mk, delta: (up - dn) / 0.02)
+            let up = simulate(s, spotScale: lvl * 1.01, paths: fastPaths).pv
+            return LadderRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
         }
     }
 
@@ -578,10 +598,9 @@ public enum Engine {
         var out: [EventBlock] = []
         func block(_ s2: Instrument, level: Double, title: String, caption: String) {
             let rows = [level - 0.04, level - 0.015, level, level + 0.015, level + 0.04].map { lvl -> ScenarioRow in
-                let up = simulate(s2, spotScale: lvl * 1.01, paths: fastPaths).pv
-                let dn = simulate(s2, spotScale: lvl * 0.99, paths: fastPaths).pv
                 let mk = simulate(s2, spotScale: lvl, paths: fastPaths).pv
-                return ScenarioRow(spot: lvl, mark: mk, delta: (up - dn) / 0.02)
+                let up = simulate(s2, spotScale: lvl * 1.01, paths: fastPaths).pv
+                return ScenarioRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
             }
             out.append(EventBlock(title: title, rows: rows, caption: caption))
         }

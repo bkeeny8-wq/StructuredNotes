@@ -32,20 +32,20 @@ public struct Asset: Hashable, Sendable {
 }
 
 public enum Market {
-    public static let asOf = "indices ≈ Jul 20 · stocks/ETFs Jul 21 2026"
+    public static let asOf = "indices/NVDA Jul 22 close · ETFs Jul 23 · other stocks Jul 21 2026"
     /// ^TNX ~4.60% (Yahoo). Substitute the term-matched tenor.
     public static let ust = 0.046
 
     public static let catalog: [Asset] = [
-        Asset(ticker: "SPX", name: "S&P 500", cls: .indexETF, spot: 7478, vol: 0.184, div: 0.0105, sourced: true, tapeCount: 15708, source: "Spot Yahoo 7/20 · VIX 18.4 · yld Multpl"),
-        Asset(ticker: "RTY", name: "Russell 2000", cls: .indexETF, spot: 2942, vol: 0.23, div: 0.012, sourced: true, tapeCount: 13882, source: "Spot Yahoo 7/20 · vol/div est (use RVX)"),
-        Asset(ticker: "NDX", name: "Nasdaq-100", cls: .indexETF, spot: 28604, vol: 0.285, div: 0.006, sourced: true, tapeCount: 8599, source: "Spot Yahoo 7/20 · VXN 28.5 · QQQ yld"),
-        Asset(ticker: "INDU", name: "Dow Jones Industrial", cls: .indexETF, spot: 51929, vol: 0.17, div: 0.017, sourced: true, tapeCount: 4263, source: "Yahoo intraday 7/22 · vol/div est"),
+        Asset(ticker: "SPX", name: "S&P 500", cls: .indexETF, spot: 7498.96, vol: 0.166, div: 0.0105, sourced: true, tapeCount: 15708, source: "Close 7/22 Yahoo · VIX 16.6 Cboe · yld Multpl"),
+        Asset(ticker: "RTY", name: "Russell 2000", cls: .indexETF, spot: 2959.94, vol: 0.23, div: 0.012, sourced: true, tapeCount: 13882, source: "Close 7/22 Yahoo · vol/div est (use RVX)"),
+        Asset(ticker: "NDX", name: "Nasdaq-100", cls: .indexETF, spot: 27240, vol: 0.285, div: 0.006, sourced: true, tapeCount: 8599, source: "DERIVED: QQQ 7/23 × 38.6 NAV ratio · VXN 28.5"),
+        Asset(ticker: "INDU", name: "Dow Jones Industrial", cls: .indexETF, spot: 52218.58, vol: 0.17, div: 0.017, sourced: true, tapeCount: 4263, source: "Close 7/22 Yahoo · vol/div est"),
         Asset(ticker: "SX5E", name: "Euro Stoxx 50", cls: .indexETF, spot: 0, vol: 0.17, div: 0.031, sourced: false, tapeCount: 3530, source: "assumption tier — wire a feed"),
         Asset(ticker: "NDXT", name: "Nasdaq-100 Tech", cls: .indexETF, spot: 0, vol: 0.3, div: 0.004, sourced: false, tapeCount: 2131, source: "assumption tier — wire a feed"),
         Asset(ticker: "SPXFP", name: "S&P 500 Futures-adj", cls: .indexETF, spot: 0, vol: 0.184, div: 0.0105, sourced: false, tapeCount: 1692, source: "assumption tier — wire a feed"),
-        Asset(ticker: "QQQ", name: "Invesco QQQ", cls: .indexETF, spot: 740.62, vol: 0.285, div: 0.006, sourced: true, tapeCount: 726, source: "Close 7/21 CNBC · VXN proxy"),
-        Asset(ticker: "SPY", name: "SPDR S&P 500", cls: .indexETF, spot: 746.74, vol: 0.184, div: 0.0105, sourced: true, tapeCount: 704, source: "Close 7/21 CNBC · VIX proxy"),
+        Asset(ticker: "QQQ", name: "Invesco QQQ", cls: .indexETF, spot: 705.35, vol: 0.285, div: 0.006, sourced: true, tapeCount: 726, source: "7/23 Slickcharts/Massive · VXN proxy · tech −4.8% since 7/21"),
+        Asset(ticker: "SPY", name: "SPDR S&P 500", cls: .indexETF, spot: 747.41, vol: 0.166, div: 0.0105, sourced: true, tapeCount: 704, source: "7/23 Slickcharts/Massive · VIX proxy"),
         Asset(ticker: "XLU", name: "Utilities SPDR", cls: .indexETF, spot: 44.92, vol: 0.18, div: 0.0266, sourced: true, tapeCount: 654, source: "Close 7/21 stockanalysis.com · yld 2.66 ttm sourced · vol est 18"),
         Asset(ticker: "KRE", name: "Regional Banks", cls: .indexETF, spot: 0, vol: 0.28, div: 0.028, sourced: false, tapeCount: 640, source: "assumption tier — wire a feed"),
         Asset(ticker: "NKY", name: "Nikkei 225", cls: .indexETF, spot: 0, vol: 0.19, div: 0.016, sourced: false, tapeCount: 634, source: "assumption tier — wire a feed"),
@@ -87,7 +87,7 @@ public enum Market {
         Asset(ticker: "RSP", name: "RSP", cls: .indexETF, spot: 0, vol: 0.24, div: 0.015, sourced: false, tapeCount: 105, source: "assumption tier — wire a feed"),
         Asset(ticker: "MAX", name: "MAX", cls: .indexETF, spot: 0, vol: 0.17, div: 0.02, sourced: false, tapeCount: 104, source: "assumption tier — wire a feed"),
         Asset(ticker: "SPXF4EV6", name: "SPXF4EV6", cls: .indexETF, spot: 0, vol: 0.184, div: 0.04, sourced: false, tapeCount: 100, source: "decrement index — div set to the decrement rate, vol ≈ SPX"),
-        Asset(ticker: "NVDA", name: "NVIDIA", cls: .stock, spot: 207.29, vol: 0.42, div: 0.0002, sourced: true, tapeCount: 2466, source: "Close 7/21 Nasdaq/MacroTrends · vol est 42"),
+        Asset(ticker: "NVDA", name: "NVIDIA", cls: .stock, spot: 212.06, vol: 0.42, div: 0.0002, sourced: true, tapeCount: 2466, source: "Close 7/22 stockanalysis/Investing · vol est 42"),
         Asset(ticker: "AMZN", name: "Amazon", cls: .stock, spot: 247.55, vol: 0.33, div: 0.0, sourced: true, tapeCount: 1452, source: "Close 7/21 Investing.com · vol est 33"),
         Asset(ticker: "MSFT", name: "Microsoft", cls: .stock, spot: 397.64, vol: 0.25, div: 0.0092, sourced: true, tapeCount: 1199, source: "Close 7/21 Investing.com · yld sourced · vol est"),
         Asset(ticker: "AVGO", name: "Broadcom", cls: .stock, spot: 386.5, vol: 0.4, div: 0.0068, sourced: true, tapeCount: 976, source: "Close 7/21 CNN · yld sourced · vol est"),

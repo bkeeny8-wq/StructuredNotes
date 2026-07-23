@@ -238,8 +238,8 @@ extension Instrument {
         downside: .par, protection: 0.60, gearedBuffer: false,
         minRedemption: 0, secondChance: false, secondChanceLevel: 0.60,
         protObs: .european,
-        ust3m: 0.0385, ust1y: 0.0401, ust2y: 0.0418,
-        ust3y: 0.0421, ust5y: 0.0428, ust7y: 0.0440,
+        ust3m: 0.0389, ust1y: 0.0411, ust2y: 0.0431,
+        ust3y: 0.0434, ust5y: 0.0441, ust7y: 0.0453,
         spreadShort: 0.004, spreadLong: 0.006, volShift: 0,
         chargesOn: true, skewSlope: 0.010, barrierShift: 0.01,
         corrBA: 0.03, volBA: 0.005, reserveBps: 10, ufFee: 0.025)
