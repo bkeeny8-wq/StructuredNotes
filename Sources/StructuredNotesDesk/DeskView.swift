@@ -155,6 +155,8 @@ public struct DeskView: View {
                 LeverRow(label: "Pairwise correlation ρ", display: String(format: "%.2f", spec.correlation),
                          value: $spec.correlation, range: 0.2...0.95, step: 0.05)
             }
+            LeverRow(label: "Vol shift (all names)", display: String(format: "%+.0f pts", spec.volShift * 100),
+                     value: $spec.volShift, range: -0.10...0.15, step: 0.01)
         }
     }
 
@@ -378,8 +380,6 @@ public struct DeskView: View {
                      value: $spec.spreadShort, range: 0...0.02, step: 0.0005)
             LeverRow(label: "Funding spread @ 7Y", display: Fmt.bp(spec.spreadLong),
                      value: $spec.spreadLong, range: 0...0.02, step: 0.0005)
-            LeverRow(label: "Vol shift (all names)", display: String(format: "%+.0f pts", spec.volShift * 100),
-                     value: $spec.volShift, range: -0.10...0.15, step: 0.01)
             Text("Funding at \(termStr(spec.termYears)) = \(Fmt.pct(Engine.fundingZero(spec, spec.termYears), 2)). Cash flows discount off the funding curve at their own dates; paths drift off risk-free forwards.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
