@@ -1,6 +1,6 @@
-# Structured Notes — instrument builder (v21, always-price)
+# Structured Notes — instrument builder (v22, teaching build)
 
-iPad SwiftUI **framework** for experienced users. Every dial is an input; the output is the note's **model value as a percentage of par**.
+iPad SwiftUI **framework** that builds a structured note feature by feature, prices it, and explains itself.
 
 **Local path:** `/Users/brandonkeeny/Projects/Structured Notes`  
 **Remote:** https://github.com/bkeeny8-wq/StructuredNotes
@@ -11,18 +11,25 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 
 | Target | Type |
 |---|---|
-| `StructuredNotesDesk` | Framework — models, always-price engine, builder UI |
+| `StructuredNotesDesk` | Framework — engine, builder UI, teaching layer |
 | `StructuredNotesDeskExample` | Host app (`import StructuredNotesDesk` → `DeskView()`) |
 
-## What’s new in v21
+## What’s new in v22
 
-- **Vol shift** moved into the Underlying block (next to basket / ρ) — keeps market risk dials with the underliers
-- Continues v20: parallel Monte Carlo, debounced reprice, mark-consistent greeks, refreshed tape marks
+- **You changed** explainer on every lever move (cause, measured Δ in points of par, mechanism)
+- **ⓘ help** on builder/output cards; protection-observation inline explainer
+- **Learn** pill — 11 guided lessons, term-sheet translation, two-register glossary
+- **The math** as a numbered derivation with substituted numbers + plain English
+- Risk tab: what the Greeks mean for a note; model limitations honesty card
+- New `Teach.swift` (teaching copy kept apart from layout)
+
+Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 
 ## Layout
 
 ```
-Sources/StructuredNotesDesk/   # framework
+Sources/StructuredNotesDesk/   # framework (incl. Teach.swift)
 Example/                       # demo app + AppIcon
 StructuredNotesDesk.xcodeproj
+generate_xcodeproj.py          # regenerates pbxproj (registers Teach.swift)
 ```
