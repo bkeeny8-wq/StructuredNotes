@@ -261,12 +261,17 @@ public enum Engine {
         let sqdtSub = dtSub > 0 ? dtSub.squareRoot() : 0
 
         var vols = [Double](), qv = [Double](), qvSub = [Double](), divsArr = [Double]()
+        // per-asset step multipliers, hoisted out of the path/step loops
+        var volSqdt = [Double](), volSqdtSub = [Double](), varDt = [Double]()
         for (j, a) in assets.prefix(nA).enumerated() {
             let applies = bumpAsset == nil || bumpAsset == j
             let v = max(0.01, a.vol + s.volShift + (applies ? volBump : 0))
             vols.append(v); divsArr.append(a.div)
             qv.append((a.div + v * v / 2) * dt)
             qvSub.append((a.div + v * v / 2) * dtSub)
+            volSqdt.append(v * sqdt)
+            volSqdtSub.append(v * sqdtSub)
+            varDt.append(v * v * dt)
         }
         // discount factors at step dates off the funding curve; risk-free
         // forwards between steps drive the drift
@@ -307,19 +312,26 @@ public enum Engine {
                 var out = SimOut()
                 out.callSteps = [Double](repeating: 0, count: nSteps + 1)
                 var closes = [Double](repeating: 0, count: 21 * nA)
+                // path working buffers, allocated once per chunk and reset per path
+                var x = [Double](repeating: 1, count: nA)
+                var xPrev = [Double](repeating: 1, count: nA)
+                var acc = [Double](repeating: 0, count: nA)
                 let lo = paths * chunk / chunkCount
                 let hi = paths * (chunk + 1) / chunkCount
                 for pth in lo..<hi {
-            var x = [Double](repeating: 1, count: nA)
-            if let b = bumpAsset { if b < nA { x[b] = spotScale } }
-            else { for j in 0..<nA { x[j] = spotScale } }
+            if let b = bumpAsset {
+                for j in 0..<nA { x[j] = 1 }
+                if b < nA { x[b] = spotScale }
+            } else {
+                for j in 0..<nA { x[j] = spotScale }
+            }
             var missed = 0
             var knocked = false
             var periodClean = true
             var locked = false
             var cpv = 0.0, parpv = 0.0, prempv = 0.0, uppv = 0.0, losspv = 0.0
             var qacc = 0.0, uacc = 0.0
-            var xPrev = x
+            for j in 0..<nA { xPrev[j] = x[j] }
             var zPrev = perf(x, s)
             let base = pth * maxSlotsPerPath * nA
             for i in 1...nSteps {
@@ -333,7 +345,7 @@ public enum Engine {
                         for j in 0..<nA {
                             var e = 0.0
                             for k in 0...j { e += L[j][k] * z[slot + k] }
-                            x[j] *= exp(fwdSub - qvSub[j] + vols[j] * sqdtSub * e)
+                            x[j] *= exp(fwdSub - qvSub[j] + volSqdtSub[j] * e)
                             closes[sub * nA + j] = x[j]
                         }
                     }
@@ -342,13 +354,13 @@ public enum Engine {
                     for j in 0..<nA {
                         var e = 0.0
                         for k in 0...j { e += L[j][k] * z[slot + k] }
-                        x[j] *= exp(fwdDt[i] - qv[j] + vols[j] * sqdt * e)
+                        x[j] *= exp(fwdDt[i] - qv[j] + volSqdt[j] * e)
                     }
                 }
 
                 var zNow = perf(x, s)
                 if isFinal && nSubs > 0 {
-                    var acc = [Double](repeating: 0, count: nA)
+                    for j in 0..<nA { acc[j] = 0 }
                     for f in (nSubs - fixings)..<nSubs {
                         for j in 0..<nA { acc[j] += closes[f * nA + j] }
                     }
@@ -368,7 +380,7 @@ public enum Engine {
                     let B = s.protection
                     if s.basket == .worstOf || nA == 1 {
                         for j in 0..<nA where xPrev[j] > B && x[j] > B {
-                            let pHit = exp(-2 * log(xPrev[j] / B) * log(x[j] / B) / (vols[j] * vols[j] * dt))
+                            let pHit = exp(-2 * log(xPrev[j] / B) * log(x[j] / B) / varDt[j])
                             if u[base + (i - 1) * nA + j] < pHit { knocked = true; break }
                         }
                     } else if zPrev > B && zNow > B && basketVol > 0 {
@@ -376,7 +388,7 @@ public enum Engine {
                         if u[base + (i - 1) * nA] < pHit { knocked = true }
                     }
                 }
-                if bridge { xPrev = x; zPrev = zNow }
+                if bridge { for j in 0..<nA { xPrev[j] = x[j] }; zPrev = zNow }
                 if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
                 if s.lockIn && zNow >= s.lockLevel {
                     let lockObs = (callActive && i % callEvery == 0)

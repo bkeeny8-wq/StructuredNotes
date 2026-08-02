@@ -21,6 +21,11 @@ public struct DeskView: View {
     @State private var tab: OutputTab = .note
     @State private var glossaryTerm: String?
     @State private var repriceTask: Task<Void, Never>?
+    @State private var prevSpec: Instrument?
+    @State private var prevValue: Double?
+    @State private var lastChange: ChangeNote?
+    @State private var lastDelta: Double?
+    @State private var openLesson: Int?
     @State private var pricing = false
 
     private let notional = 1000.0
@@ -50,6 +55,7 @@ public struct DeskView: View {
                     .font(.system(size: 26, weight: .semibold, design: .serif))
                 Spacer()
                 Button {
+                    clearTrail()
                     spec = .initial
                 } label: {
                     Label("Reset", systemImage: "arrow.counterclockwise")
@@ -81,32 +87,27 @@ public struct DeskView: View {
         BlockCard(title: "Charges & reserves",
                   on: spec.chargesOn,
                   toggle: { mutate { $0.chargesOn.toggle() } },
-                  offHint: "Off — quoting model mid. Toggle for the dealer offer.") {
+                  offHint: "Off — quoting model mid. Toggle for the dealer offer.",
+                  help: Teach.blockHelp("charges")) {
             LeverRow(label: "Skew (vol pts per 10% moneyness)",
-                     display: String(format: "%.1fv", spec.skewSlope * 100),
-                     value: $spec.skewSlope, range: 0...0.025, step: 0.0025)
+                     value: $spec.skewSlope, range: 0...0.025, step: 0.0025, field: .volV)
             LeverRow(label: "Overhedge barrier shift",
-                     display: Fmt.pct(spec.barrierShift),
-                     value: $spec.barrierShift, range: 0...0.03, step: 0.0025)
+                     value: $spec.barrierShift, range: 0...0.03, step: 0.0025, field: .pct)
             LeverRow(label: "Correlation bid-ask (±ρ)",
-                     display: String(format: "±%.2f", spec.corrBA),
-                     value: $spec.corrBA, range: 0...0.08, step: 0.005)
+                     value: $spec.corrBA, range: 0...0.08, step: 0.005, field: .corr)
             LeverRow(label: "Vol bid-ask on |vega|",
-                     display: String(format: "%.1fv", spec.volBA * 100),
-                     value: $spec.volBA, range: 0...0.015, step: 0.001)
+                     value: $spec.volBA, range: 0...0.015, step: 0.001, field: .volV)
             LeverRow(label: "Model / rebalancing reserve",
-                     display: String(format: "%.0fbp", spec.reserveBps),
-                     value: $spec.reserveBps, range: 0...50, step: 5)
+                     value: $spec.reserveBps, range: 0...50, step: 5, field: .bps)
             LeverRow(label: "UF — advisor + wholesaler (of reoffer)",
-                     display: Fmt.pct(spec.ufFee),
-                     value: $spec.ufFee, range: 0...0.05, step: 0.0025)
+                     value: $spec.ufFee, range: 0...0.05, step: 0.0025, field: .pct)
             Text("Flat-vol Monte Carlo is a mid. These are the desk's costs of being wrong: the KI wing, unreplicable digitals, unhedgeable correlation.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
 
     private var underlyingBlock: some View {
-        Card(title: "Underlying") {
+        Card(title: "Underlying", help: Teach.blockHelp("underlying")) {
             FlexibleWrap(spacing: 6) {
                 ForEach(spec.members, id: \.self) { m in
                     Button {
@@ -145,27 +146,26 @@ public struct DeskView: View {
                 if spec.basket == .weighted {
                     ForEach(Array(spec.members.enumerated()), id: \.element) { i, m in
                         LeverRow(label: "Weight \(m)",
-                                 display: Fmt.pct(share(i), 0),
                                  value: shareBinding(i),
-                                 range: 0.05...0.90, step: 0.01)
+                                 range: 0.05...0.90, step: 0.01, field: .pct0)
                     }
                     Text("Shares rebalance to sum to 100%.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
-                LeverRow(label: "Pairwise correlation ρ", display: String(format: "%.2f", spec.correlation),
-                         value: $spec.correlation, range: 0.2...0.95, step: 0.05)
+                LeverRow(label: "Pairwise correlation ρ",
+                         value: $spec.correlation, range: 0.2...0.95, step: 0.05, field: .corr)
             }
-            LeverRow(label: "Vol shift (all names)", display: String(format: "%+.0f pts", spec.volShift * 100),
-                     value: $spec.volShift, range: -0.10...0.15, step: 0.01)
+            LeverRow(label: "Vol shift (all names)",
+                     value: $spec.volShift, range: -0.10...0.15, step: 0.01, field: .volPts)
         }
     }
 
     private var tenorBlock: some View {
-        Card(title: "Tenor & final valuation") {
-            LeverRow(label: "Term", display: termStr(spec.termYears),
+        Card(title: "Tenor & final valuation", help: Teach.blockHelp("tenor")) {
+            LeverRow(label: "Term (\(termStr(spec.termYears)))",
                      value: Binding(get: { spec.termYears * 12 },
                                     set: { spec.termYears = $0 / 12 }),
-                     range: 1...84, step: 1)
+                     range: 1...84, step: 1, field: .months)
             ChipToggle(label: "Asian tail on final valuation", on: spec.averaging != .none) {
                 mutate { s in s.averaging = s.averaging == .none ? .lastMonth : .none }
             }
@@ -182,7 +182,8 @@ public struct DeskView: View {
                   toggle: { mutate { s in
                       s.coupon = s.coupon == .none ? .contingent : .none
                   } },
-                  offHint: "Off — no coupon leg. Toggle to add income.") {
+                  offHint: "Off — no coupon leg. Toggle to add income.",
+                  help: Teach.blockHelp("coupon")) {
             ChoiceChips(options: [(CouponStyle.guaranteed, "Guaranteed"), (.contingent, "Contingent")],
                         selection: spec.coupon) { k in
                 mutate { s in
@@ -191,8 +192,8 @@ public struct DeskView: View {
                 }
             }
             Group {
-                LeverRow(label: "Coupon rate", display: Fmt.pct(spec.couponRate),
-                         value: $spec.couponRate, range: 0...0.25, step: 0.001)
+                LeverRow(label: "Coupon rate",
+                         value: $spec.couponRate, range: 0...0.25, step: 0.001, field: .pct)
                 Picker("Coupon observations", selection: $spec.couponObs) {
                     ForEach(CouponObs.allCases) { o in Text(o.rawValue).tag(o) }
                 }
@@ -201,8 +202,8 @@ public struct DeskView: View {
                     if o == .daily || o == .european { mutate { $0.memory = false } }
                 }
                 if spec.coupon == .contingent {
-                    LeverRow(label: "Coupon barrier", display: Fmt.pct(spec.couponBarrier, 0),
-                             value: $spec.couponBarrier, range: 0.4...1.0, step: 0.01)
+                    LeverRow(label: "Coupon barrier",
+                             value: $spec.couponBarrier, range: 0.4...1.0, step: 0.01, field: .pct0)
                     if spec.couponObs != .daily && spec.couponObs != .european {
                         ChoiceChips(options: BarrierObsStyle.allCases.map { ($0, "Obs: " + $0.rawValue.lowercased()) },
                                     selection: spec.couponBarrierObs) { k in mutate { $0.couponBarrierObs = k } }
@@ -229,7 +230,8 @@ public struct DeskView: View {
                   toggle: { mutate { s in
                       s.call = s.call == .none ? .autocall : .none
                   } },
-                  offHint: "Off — bullet, runs to maturity.") {
+                  offHint: "Off — bullet, runs to maturity.",
+                  help: Teach.blockHelp("call")) {
             ChoiceChips(options: [(CallFeature.autocall, "Autocall"), (.issuerCall, "Issuer call")],
                         selection: spec.call) { k in
                 mutate { s in
@@ -243,35 +245,34 @@ public struct DeskView: View {
                 }
                 .pickerStyle(.menu).tint(Theme.ink)
                 if spec.call == .autocall {
-                    LeverRow(label: "Autocall trigger", display: Fmt.pct(spec.callTrigger, 0),
-                             value: $spec.callTrigger, range: 0.7...1.1, step: 0.01)
-                    LeverRow(label: "Trigger step-down", display: spec.triggerStep == 0 ? "off" : String(format: "−%.0f%%/yr", spec.triggerStep * 100),
-                             value: $spec.triggerStep, range: 0...0.10, step: 0.005)
+                    LeverRow(label: "Autocall trigger",
+                             value: $spec.callTrigger, range: 0.7...1.1, step: 0.01, field: .pct0)
+                    LeverRow(label: "Trigger step-down",
+                             value: $spec.triggerStep, range: 0...0.10, step: 0.005, field: .stepPct)
                 }
                 LeverRow(label: "Call premium (p.a., paid at call)",
-                         display: spec.callPremium == 0 ? "off" : Fmt.pct(spec.callPremium),
-                         value: $spec.callPremium, range: 0...0.50, step: 0.0025)
+                         value: $spec.callPremium, range: 0...0.50, step: 0.0025, field: .pct)
                 if spec.callPremium > 0 {
                     Text("Paid only if called — unlike snowball, nothing at maturity.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
-                LeverRow(label: "Non-call period", display: String(format: "%.0fm", spec.nonCallMonths),
-                         value: $spec.nonCallMonths, range: 0...24, step: 1)
+                LeverRow(label: "Non-call period",
+                         value: $spec.nonCallMonths, range: 0...24, step: 1, field: .months)
                 if spec.coupon != .none {
                     ChipToggle(label: "Snowball: coupons accrue to call", on: spec.snowball) {
                         mutate { s in s.snowball.toggle(); if s.snowball { s.memory = false } }
                     }
                     if spec.snowball {
-                        LeverRow(label: "Snowball rate (p.a.)", display: Fmt.pct(spec.snowballRate),
-                                 value: $spec.snowballRate, range: 0...0.25, step: 0.0025)
+                        LeverRow(label: "Snowball rate (p.a.)",
+                                 value: $spec.snowballRate, range: 0...0.25, step: 0.0025, field: .pct)
                     }
                 }
                 ChipToggle(label: "Lock-in (Memorizer)", on: spec.lockIn) {
                     mutate { $0.lockIn.toggle() }
                 }
                 if spec.lockIn {
-                    LeverRow(label: "Lock level", display: Fmt.pct(spec.lockLevel, 0),
-                             value: $spec.lockLevel, range: 0.6...1.05, step: 0.01)
+                    LeverRow(label: "Lock level",
+                             value: $spec.lockLevel, range: 0.6...1.05, step: 0.01, field: .pct0)
                     Text("Touch the lock level on an observation and par redemption locks for good.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
@@ -289,22 +290,20 @@ public struct DeskView: View {
                   toggle: { mutate { s in
                       s.upside = s.upside == .none ? .linear : .none
                   } },
-                  offHint: "Off — no participation leg.") {
+                  offHint: "Off — no participation leg.",
+                  help: Teach.blockHelp("upside")) {
             ChoiceChips(options: [(UpsideKind.linear, "Linear"), (.absolute, "Absolute")],
                         selection: spec.upside) { k in mutate { $0.upside = k } }
             ChoiceChips(options: [(UpsideKind.digital, "Digital"), (.digitalPlus, "Digi-plus")],
                         selection: spec.upside) { k in mutate { $0.upside = k } }
             if [.linear, .absolute].contains(spec.upside) {
                 LeverRow(label: spec.upside == .absolute ? "Upside participation" : "Participation",
-                         display: Fmt.pct(spec.participation, 0),
-                         value: $spec.participation, range: 0.25...3, step: 0.05)
+                         value: $spec.participation, range: 0.25...3, step: 0.05, field: .pct0)
                 if spec.upside == .absolute {
                     LeverRow(label: "Absolute participation (down side)",
-                             display: Fmt.pct(spec.absParticipation, 0),
-                             value: $spec.absParticipation, range: 0.25...1.5, step: 0.05)
+                             value: $spec.absParticipation, range: 0.25...1.5, step: 0.05, field: .pct0)
                     LeverRow(label: "Absolute knock-out",
-                             display: Fmt.pct(spec.absoluteKO, 0),
-                             value: $spec.absoluteKO, range: 0.4...1.0, step: 0.01)
+                             value: $spec.absoluteKO, range: 0.4...1.0, step: 0.01, field: .pct0)
                     Text("Absolute return pays between \(Fmt.pct(spec.absoluteKO, 0)) and par; below the KO, the downside block takes over. Max absolute gain = \(Fmt.pct(spec.absParticipation * (1 - spec.absoluteKO))).")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
@@ -312,21 +311,19 @@ public struct DeskView: View {
                     mutate { s in s.cap = s.cap == nil ? 1.30 : nil }
                 }
                 if spec.cap != nil {
-                    LeverRow(label: "Cap level", display: "+" + Fmt.pct((spec.cap ?? 1.3) - 1, 0),
+                    LeverRow(label: "Cap level (+ above par)",
                              value: Binding(get: { spec.cap ?? 1.3 }, set: { spec.cap = $0 }),
-                             range: 1.05...2.5, step: 0.01)
+                             range: 1.05...2.5, step: 0.01, field: .capPct)
                 }
             }
             if [.digital, .digitalPlus].contains(spec.upside) {
-                LeverRow(label: "Digital level", display: Fmt.pct(spec.digital, 0),
-                         value: $spec.digital, range: 0.05...1.0, step: 0.01)
+                LeverRow(label: "Digital level",
+                         value: $spec.digital, range: 0.05...1.0, step: 0.01, field: .pct0)
                 LeverRow(label: "Digital strike (ITM below 100%)",
-                         display: Fmt.pct(spec.digitalStrike, 0),
-                         value: $spec.digitalStrike, range: 0.5...1.1, step: 0.01)
+                         value: $spec.digitalStrike, range: 0.5...1.1, step: 0.01, field: .pct0)
                 if spec.upside == .digitalPlus {
                     LeverRow(label: "Leverage above the digital",
-                             display: String(format: "%.2f×", spec.digiPlusLeverage),
-                             value: $spec.digiPlusLeverage, range: 1...3, step: 0.05)
+                             value: $spec.digiPlusLeverage, range: 1...3, step: 0.05, field: .mult)
                 }
             }
         }
@@ -338,13 +335,13 @@ public struct DeskView: View {
                   toggle: { mutate { s in
                       s.downside = s.downside == .par ? .kiPut : .par
                   } },
-                  offHint: "Full protection (par floor). Toggle to sell downside.") {
+                  offHint: "Full protection (par floor). Toggle to sell downside.",
+                  help: Teach.blockHelp("downside")) {
             ChoiceChips(options: [(DownsideKind.buffer, "Buffer"), (.kiPut, "KI put")],
                         selection: spec.downside) { k in mutate { $0.downside = k } }
             Group {
                 LeverRow(label: spec.downside == .buffer ? "Buffer strike" : "KI barrier",
-                         display: Fmt.pct(spec.protection, 0),
-                         value: $spec.protection, range: 0.4...0.95, step: 0.01)
+                         value: $spec.protection, range: 0.4...0.95, step: 0.01, field: .pct0)
                 if spec.downside == .buffer {
                     ChipToggle(label: "Geared (lose 1/strike below)", on: spec.gearedBuffer) {
                         mutate { $0.gearedBuffer.toggle() }
@@ -355,31 +352,36 @@ public struct DeskView: View {
                         ForEach(ProtectionObs.allCases) { o in Text(o.rawValue).tag(o) }
                     }
                     .pickerStyle(.menu).tint(Theme.ink)
+                    Text(protObsHint)
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                    MiniHelp(title: "Why the observation matters more than the level",
+                             help: Teach.blockHelp("protectionObs"))
                     ChipToggle(label: "Second chance (Elite)", on: spec.secondChance) {
                         mutate { $0.secondChance.toggle() }
                     }
                     if spec.secondChance {
-                        LeverRow(label: "Second-chance level", display: Fmt.pct(spec.secondChanceLevel, 0),
-                                 value: $spec.secondChanceLevel, range: 0.3...0.9, step: 0.01)
+                        LeverRow(label: "Second-chance level",
+                                 value: $spec.secondChanceLevel, range: 0.3...0.9, step: 0.01, field: .pct0)
                         Text("A monitored knock is forgiven if the final level recovers to at least this. Pair with a monitored barrier.")
                             .font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                 }
-                LeverRow(label: "Min redemption floor", display: spec.minRedemption == 0 ? "off" : Fmt.pct(spec.minRedemption, 0),
-                         value: $spec.minRedemption, range: 0...0.95, step: 0.05)
+                LeverRow(label: "Min redemption floor",
+                         value: $spec.minRedemption, range: 0...0.95, step: 0.05, field: .pct0)
             }
         }
     }
 
     private var economicsBlock: some View {
-        Card(title: "Rates & funding") {
+        Card(title: "Rates & funding", help: Teach.blockHelp("rates")) {
             curveChart
             Text("Drag the chart to reshape the UST curve — the nearest pillar snaps to your finger. The shaded band is the credit spread resting on top. Sourced: Treasury.gov via Slickcharts, 7/22/26.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
-            LeverRow(label: "Funding spread @ 1Y", display: Fmt.bp(spec.spreadShort),
-                     value: $spec.spreadShort, range: 0...0.02, step: 0.0005)
-            LeverRow(label: "Funding spread @ 7Y", display: Fmt.bp(spec.spreadLong),
-                     value: $spec.spreadLong, range: 0...0.02, step: 0.0005)
+            LeverRow(label: "Funding spread @ 1Y",
+                     value: $spec.spreadShort, range: 0...0.02, step: 0.0005, field: .bp)
+            LeverRow(label: "Funding spread @ 7Y",
+                     value: $spec.spreadLong, range: 0...0.02, step: 0.0005, field: .bp)
             Text("Funding at \(termStr(spec.termYears)) = \(Fmt.pct(Engine.fundingZero(spec, spec.termYears), 2)). Cash flows discount off the funding curve at their own dates; paths drift off risk-free forwards.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
@@ -547,8 +549,10 @@ public struct DeskView: View {
     private var workThrough: some View {
         VStack(spacing: 12) {
             PillSelector(tab: $tab)
+            if let ch = lastChange { changeCard(ch) }
             switch tab {
             case .note:
+                if isBare { startHereCard }
                 valueCard
                 offerCard
                 payoffCard
@@ -557,22 +561,145 @@ public struct DeskView: View {
                 outcomesCard
             case .risk:
                 riskCard
+                greeksCard
                 eventCard
                 ladderCard
                 deskBookCard
             case .math:
                 workCard
                 ledgerCard
+                assumptionsCard
+            case .learn:
+                lessonsCard
+                termSheetCard
                 glossaryCard
                 suitabilityCard
             }
         }
     }
 
+    private var isBare: Bool {
+        spec.coupon == .none && spec.call == .none
+            && spec.upside == .none && spec.downside == .par
+    }
+
+    private var protObsHint: String {
+        switch spec.protObs {
+        case .european:
+            return "Looked at once, on the final valuation date. Intra-life dips are forgiven entirely."
+        case .quarterly:
+            return "Checked every quarter. One breach on any check is permanent, even if the market recovers."
+        case .monthly:
+            return "Checked every month — twelve times the chances to break versus a single European look."
+        case .daily:
+            return "Every day, including touches between closes (Brownian bridge). The strictest way to watch the same level."
+        }
+    }
+
+    // MARK: teaching — what just changed
+
+    private func changeCard(_ ch: ChangeNote) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("YOU CHANGED").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.opt)
+                Spacer()
+                if let dl = lastDelta {
+                    Text(String(format: "%+.2f pts of par", dl * 100))
+                        .font(.system(size: 14, weight: .bold, design: .monospaced))
+                        .foregroundStyle(abs(dl) < 0.0002 ? Theme.fee : (dl > 0 ? Theme.bond : Theme.loss))
+                }
+            }
+            Text(ch.label).font(.system(size: 14, weight: .semibold))
+            Text(ch.why).font(.system(size: 12)).foregroundStyle(Theme.ink)
+                .fixedSize(horizontal: false, vertical: true)
+            if ch.twoSided {
+                Text("This lever is genuinely two-sided — read the measured number above rather than trusting the intuition.")
+                    .font(.system(size: 10.5, weight: .semibold)).foregroundStyle(Theme.amber)
+            }
+            if let dl = lastDelta, abs(dl) < 0.0002 {
+                Text("Value barely moved. Either the feature is nearly free at these levels, or two effects inside it cancelled out.")
+                    .font(.system(size: 10.5)).foregroundStyle(.secondary)
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(red: 0.955, green: 0.965, blue: 0.98), in: RoundedRectangle(cornerRadius: 12))
+        .overlay(RoundedRectangle(cornerRadius: 12).stroke(Theme.opt.opacity(0.35)))
+    }
+
+    private var startHereCard: some View {
+        Card(title: "Start here") {
+            Text("Nothing is switched on yet, so what you are looking at is the raw material of every structured note: a promise from the bank to repay $1,000 in \(termStr(spec.termYears)), and nothing else.")
+                .font(.system(size: 12.5))
+            Text("Read the value below. The gap between it and par is the issuer's funding cost over the term — and that gap is the entire budget available to buy coupons, participation, or protection. Switch a block on in the rail to spend it.")
+                .font(.system(size: 12.5)).foregroundStyle(.secondary)
+            Button {
+                tab = .learn
+            } label: {
+                Label("Take the guided lessons", systemImage: "graduationcap")
+                    .font(.system(size: 12.5, weight: .semibold))
+            }
+            .buttonStyle(.borderedProminent).tint(Theme.bond)
+        }
+    }
+
+    // MARK: teaching — what the risk numbers mean
+
+    private var greeksCard: some View {
+        Card(title: "What these numbers mean") {
+            ForEach(Teach.greeks, id: \.0) { name, meaning in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(name).font(.system(size: 12.5, weight: .bold))
+                    Text(meaning).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 3)
+                .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+            }
+            Text("Every number above is a re-price of the same note with one input nudged and the terms held frozen. That is all a Greek is: the same instrument, priced twice.")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: teaching — what the model does and does not do
+
+    private var assumptionsCard: some View {
+        Card(title: "What this model does — and where it is wrong") {
+            ForEach(Self.assumptionRows, id: \.0) { head, body in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(head).font(.system(size: 12.5, weight: .bold))
+                    Text(body).font(.system(size: 11.5)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 3)
+                .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+            }
+            Text("Knowing where a model is wrong is more useful than knowing where it is right. Every item above is a real limitation, and each one has a well-known fix that a production desk applies.")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+        }
+    }
+
+    private static let assumptionRows: [(String, String)] = [
+        ("Simulation, not a formula",
+         "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise."),
+        ("One flat volatility per name — the biggest simplification",
+         "The model prices every option on a name at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits. That is why the mid is not the offer: the skew charge in the charge stack is the correction, and on income notes it is usually the largest single line."),
+        ("Correlation is a single number",
+         "One pairwise correlation is applied across the whole basket, and it does not change with the market. In practice correlation rises sharply in sell-offs, which makes worst-of baskets behave worse than modelled precisely when it matters most."),
+        ("The issuer call is rule-based",
+         "An issuer call is priced as though the bank calls whenever the level is at or above 100%. A bank exercising optimally would do better for itself and worse for the holder, so a value shown for an issuer-callable note is an upper bound rather than a quote."),
+        ("Barriers are watched at fixed times",
+         "Monitored barriers are checked on their observation schedule. The daily setting adds a Brownian-bridge correction for touches between closes, which is close to continuous monitoring but not identical to it."),
+        ("Prices come from a stored snapshot",
+         "Levels, dividends and volatilities are a saved snapshot, not a live feed, and volatilities for most names are documented estimates rather than listed implieds. Directions and magnitudes are reliable; the last decimal is not."),
+        ("Lognormal paths",
+         "Returns are assumed lognormal with constant volatility. Real markets gap, and gaps hurt barrier structures more than smooth diffusion does — which is part of what the model reserve in the charge stack is paying for."),
+    ]
+
     // MARK: advisor education
 
     private var advisorCard: some View {
-        Card(title: "How this note works — advisor view") {
+        Card(title: "How this note works — advisor view", help: Teach.blockHelp("advisor")) {
             bulletRow(color: Theme.amber, head: "You earn", body: earnLine)
             if spec.call != .none, let r = result {
                 bulletRow(color: Theme.opt, head: "It ends early",
@@ -631,7 +758,7 @@ public struct DeskView: View {
     }
 
     private var outcomesCard: some View {
-        Card(title: "Outcomes — \(Engine.fullPaths.formatted()) paths") {
+        Card(title: "Outcomes — \(Engine.fullPaths.formatted()) paths", help: Teach.blockHelp("outcomes")) {
             if let r = result {
                 if !r.callDist.isEmpty {
                     Text("CALLED BY").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
@@ -662,38 +789,131 @@ public struct DeskView: View {
 
     // MARK: glossary + suitability
 
-    private static let glossary: [(String, String)] = [
-        ("τ exit time", "The path's exit date — the call date if called, else maturity. Par discounts from τ."),
-        ("Q annuity", "Expected sum of discount factors at paid coupon dates. The coupon leg is exactly c × Q."),
-        ("z_f funding zero", "The issuer's funding rate at a tenor: UST plus the credit spread curve. Every flow discounts at its own z_f."),
-        ("ρ correlation", "Pairwise co-movement of basket members. Worst-of holders are long ρ; the desk is short it."),
-        ("KI knock-in", "A barrier that, once breached (per its observation style), converts protection into full downside from par."),
-        ("Worst-of", "Conditions read the weakest member. More members or lower ρ make the worst worse — and the coupon bigger."),
-        ("Memory", "Missed contingent coupons are recovered on the next observation that clears the barrier."),
-        ("CRN", "Common random numbers: one fixed random set for every reval, so charge and ledger differences are noise-free."),
-    ]
-
     private var glossaryCard: some View {
-        Card(title: "Symbols & terms — tap to expand") {
+        Card(title: "Plain English — tap any term") {
             FlexibleWrap(spacing: 6) {
-                ForEach(Self.glossary, id: \.0) { term, _ in
+                ForEach(Teach.glossary) { term in
                     Button {
-                        glossaryTerm = glossaryTerm == term ? nil : term
+                        glossaryTerm = glossaryTerm == term.name ? nil : term.name
                     } label: {
-                        Text(term)
-                            .font(.system(size: 11.5, weight: glossaryTerm == term ? .bold : .regular))
+                        Text(term.name)
+                            .font(.system(size: 11.5, weight: glossaryTerm == term.name ? .bold : .regular))
                             .padding(.horizontal, 10).padding(.vertical, 6)
-                            .background(glossaryTerm == term ? Theme.ink : Color(red: 0.96, green: 0.95, blue: 0.92), in: Capsule())
-                            .foregroundStyle(glossaryTerm == term ? .white : Theme.ink)
+                            .background(glossaryTerm == term.name ? Theme.ink : Color(red: 0.96, green: 0.95, blue: 0.92), in: Capsule())
+                            .foregroundStyle(glossaryTerm == term.name ? .white : Theme.ink)
                     }
                     .buttonStyle(.plain)
                 }
             }
-            if let t = glossaryTerm, let def = Self.glossary.first(where: { $0.0 == t })?.1 {
-                Text(def).font(.system(size: 12)).foregroundStyle(Theme.ink)
-                    .padding(10)
-                    .background(Color(red: 0.98, green: 0.97, blue: 0.94), in: RoundedRectangle(cornerRadius: 8))
+            if let t = glossaryTerm, let term = Teach.glossary.first(where: { $0.name == t }) {
+                VStack(alignment: .leading, spacing: 8) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("IF YOU ARE NEW").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.bond)
+                        Text(term.plain).font(.system(size: 12.5))
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("HOW A DESK SAYS IT").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.opt)
+                        Text(term.desk).font(.system(size: 12)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+                .padding(11)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(Color(red: 0.98, green: 0.97, blue: 0.94), in: RoundedRectangle(cornerRadius: 8))
             }
+            Text("\(Teach.glossary.count) terms, each written twice: once for someone who has never seen a note, once the way it would be said on a desk.")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+        }
+    }
+
+    // MARK: teaching — guided lessons
+
+    private var lessonsCard: some View {
+        Card(title: "Guided lessons") {
+            Text("Eleven builds, in order. Each one loads a structure into the rail and tells you what to do to it and what to watch. Work through them and you will have priced every major feature on the US shelf.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Teach.lessons) { lesson in
+                VStack(alignment: .leading, spacing: 7) {
+                    Button {
+                        openLesson = openLesson == lesson.number ? nil : lesson.number
+                    } label: {
+                        HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Text("\(lesson.number)")
+                                .font(.system(size: 12, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .frame(width: 22, height: 22)
+                                .background(Circle().fill(Theme.ink))
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(lesson.title).font(.system(size: 13.5, weight: .semibold))
+                                    .fixedSize(horizontal: false, vertical: true)
+                                Text(lesson.goal).font(.system(size: 11)).foregroundStyle(.secondary)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Spacer(minLength: 0)
+                            Image(systemName: openLesson == lesson.number ? "chevron.up" : "chevron.down")
+                                .font(.system(size: 10)).foregroundStyle(Theme.fee)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+
+                    if openLesson == lesson.number {
+                        VStack(alignment: .leading, spacing: 6) {
+                            ForEach(Array(lesson.steps.enumerated()), id: \.offset) { i, step in
+                                HStack(alignment: .top, spacing: 7) {
+                                    Text("\(i + 1).").font(.system(size: 11, weight: .bold, design: .monospaced))
+                                        .foregroundStyle(Theme.opt)
+                                    Text(step).font(.system(size: 12))
+                                        .fixedSize(horizontal: false, vertical: true)
+                                }
+                            }
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("WHAT TO NOTICE").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.bond)
+                                Text(lesson.notice).font(.system(size: 12)).foregroundStyle(Theme.ink)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            Button {
+                                clearTrail()
+                                spec = lesson.spec
+                                tab = .note
+                            } label: {
+                                Label("Load this build", systemImage: "arrow.down.circle")
+                                    .font(.system(size: 12, weight: .semibold))
+                            }
+                            .buttonStyle(.bordered).tint(Theme.bond)
+                        }
+                        .padding(11)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(Color(red: 0.98, green: 0.97, blue: 0.94), in: RoundedRectangle(cornerRadius: 8))
+                    }
+                }
+                .padding(.vertical, 5)
+                .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+            }
+        }
+    }
+
+    // MARK: teaching — the same note as a term sheet
+
+    private var termSheetCard: some View {
+        Card(title: "The same note, as a term sheet") {
+            Text("Clients never see a slider. They see this. Every line below is generated from the build in the rail, in the language a prospectus would use.")
+                .font(.system(size: 12)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
+            ForEach(Teach.termSheet(spec, offer: charges?.offer), id: \.0) { label, value in
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(label.uppercased()).font(.system(size: 9.5, weight: .bold)).foregroundStyle(Theme.fee)
+                    Text(value).font(.system(size: 12.5, design: .serif))
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(.vertical, 4)
+                .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+            }
+            Text("Read it against the rail: each phrase here is a lever you just dragged. The two most under-read lines on a real term sheet are the barrier observation and the estimated value.")
+                .font(.system(size: 10.5)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 
@@ -734,7 +954,7 @@ public struct DeskView: View {
     @ViewBuilder
     private var offerCard: some View {
         if spec.chargesOn, let r = result {
-            Card(title: "Dealer offer build-up") {
+            Card(title: "Dealer offer build-up", help: Teach.blockHelp("offer")) {
                 LegRow(label: "Model mid (flat vol)", value: Fmt.pct(r.value, 2))
                 if let ch = charges {
                     if ch.skew > 0.0002 { LegRow(label: "− skew: downside leg at strike vol", value: "−" + Fmt.pct(ch.skew, 2), color: Theme.loss) }
@@ -824,7 +1044,7 @@ public struct DeskView: View {
     }
 
     private var payoffCard: some View {
-        Card(title: "Redemption at maturity vs basket performance") {
+        Card(title: "Redemption at maturity vs basket performance", help: Teach.blockHelp("payoff")) {
             Chart(payoffPoints) { pt in
                 LineMark(x: .value("Performance %", pt.ret), y: .value("Value $", pt.value))
                     .foregroundStyle(by: .value("Series", pt.series))
@@ -842,7 +1062,7 @@ public struct DeskView: View {
     }
 
     private var decompositionCard: some View {
-        Card(title: "Trader decomposition (per $1,000)") {
+        Card(title: "Trader decomposition (per $1,000)", help: Teach.blockHelp("decomposition")) {
             if let r = result {
                 LegRow(label: "Par leg — principal at exit", value: "+" + Fmt.usd0(r.parLeg * notional), color: Theme.bond)
                 if r.premiumLeg > 0.0005 {
@@ -869,52 +1089,149 @@ public struct DeskView: View {
         }
     }
 
+    private struct MathStep: Identifiable {
+        let id: Int
+        let title: String
+        let lines: [String]
+        let meaning: String
+    }
+
     private var workCard: some View {
-        Card(title: "The work — algebra with the numbers in") {
+        Card(title: "The work — every number, derived") {
             if let r = result {
-                ForEach(workLines(r), id: \.self) { line in
-                    Text(line)
-                        .font(.system(size: 12, design: .monospaced))
-                        .foregroundStyle(Theme.ink)
-                        .padding(.vertical, 2)
+                Text("Nothing below is asserted. Each step is computed from the same \(Engine.fullPaths.formatted()) simulated paths, and the formula is printed with its numbers already substituted so you can check it by hand.")
+                    .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                ForEach(mathSteps(r)) { step in
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack(spacing: 7) {
+                            Text("\(step.id)")
+                                .font(.system(size: 11, weight: .bold, design: .monospaced))
+                                .foregroundStyle(.white)
+                                .frame(width: 20, height: 20)
+                                .background(Circle().fill(Theme.ink))
+                            Text(step.title).font(.system(size: 13, weight: .semibold, design: .serif))
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        ForEach(step.lines, id: \.self) { line in
+                            Text(line)
+                                .font(.system(size: 11.5, design: .monospaced))
+                                .foregroundStyle(Theme.ink)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        Text(step.meaning)
+                            .font(.system(size: 11.5)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                    .padding(.vertical, 6)
+                    .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
                 }
-                Text("Monte Carlo, \(Engine.fullPaths.formatted()) paths, common random numbers — legs are exactly additive, so the identity ties.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            } else {
+                ProgressView().font(.footnote)
             }
         }
     }
 
-    private func workLines(_ r: PricingResult) -> [String] {
-        var out = [String]()
+    private func mathSteps(_ r: PricingResult) -> [MathStep] {
+        var out = [MathStep]()
+        var n = 1
+        func add(_ title: String, _ lines: [String], _ meaning: String) {
+            out.append(MathStep(id: n, title: title, lines: lines, meaning: meaning)); n += 1
+        }
+
         let zT = Engine.fundingZero(spec, spec.termYears)
-        out.append("z_f(\(termStr(spec.termYears))) = UST(\(Fmt.pct(Engine.zeroRF(spec, spec.termYears), 2))) + spread(\(Fmt.bp(Engine.spread(spec, spec.termYears)))) = \(Fmt.pct(zT, 2))")
-        out.append("df(T) = e^(−z_f·T) = \(String(format: "%.4f", exp(-zT * spec.termYears))) · earlier flows discount at their own tenors")
-        out.append("par leg  E[df(τ)]·1000 = \(Fmt.usd0(r.parLeg * notional))")
+        add("Discount every promise at the issuer's own cost of money",
+            ["z_f(\(termStr(spec.termYears))) = UST \(Fmt.pct(Engine.zeroRF(spec, spec.termYears), 2)) + spread \(Fmt.bp(Engine.spread(spec, spec.termYears))) = \(Fmt.pct(zT, 2))",
+             "df(T) = e^(−z_f·T) = \(String(format: "%.4f", exp(-zT * spec.termYears)))",
+             "each earlier cash flow uses the rate for its own date"],
+            "A dollar promised in the future is worth less today, and how much less depends on when it arrives and what it costs this particular bank to borrow. This is where the money for every feature comes from: the issuer keeps the interest it would have paid on a plain bond and spends it on options instead.")
+
+        add("The par leg — the promise to give the principal back",
+            ["par leg = E[df(τ)] × 1000 = \(Fmt.usd0(r.parLeg * notional))",
+             spec.call != .none
+                ? "P(called) = \(Fmt.pct(r.probCalled, 0)) · expected life \(String(format: "%.1f", r.expectedLife))y"
+                : "no call — τ is always maturity"],
+            "τ is simply the date the note ends: the call date on paths that get called, maturity on the rest. Average the discount factor at that date across every path and you have what the repayment promise is worth today. A call actually makes this leg worth more, because the principal comes back sooner.")
+
         if spec.downside != .par {
-            out.append("downside E[df·shortfall] = \(Fmt.usd0(r.downsideLeg * notional))   P(loss) = \(Fmt.pct(r.probLoss, 0))")
+            add("The downside you sold — this is what funds the note",
+                ["downside leg = E[df × shortfall] × 1000 = \(Fmt.usd0(r.downsideLeg * notional))",
+                 "P(loss at maturity) = \(Fmt.pct(r.probLoss, 0))"],
+                "On the paths where protection fails, the note repays less than par and the shortfall is money that stays with the issuer. Averaged and discounted, that is the market price of your downside. Every coupon and every point of participation in this note was bought with it.")
         }
+
         if spec.coupon != .none {
-            out.append("Q = E[Σ df at paid dates] = \(String(format: "%.3f", r.qFactor))")
             let rate = spec.snowball ? spec.snowballRate : spec.couponRate
-            out.append("coupon leg = \(spec.snowball ? "r_sb" : "c")·Q = \(Fmt.pct(rate))·\(String(format: "%.3f", r.qFactor)) = \(Fmt.usd0(r.couponLeg * notional))")
+            add("The income leg — the coupon rate times Q",
+                ["Q = E[Σ df at dates actually paid] = \(String(format: "%.3f", r.qFactor))",
+                 "coupon leg = \(spec.snowball ? "r_sb" : "c") × Q = \(Fmt.pct(rate)) × \(String(format: "%.3f", r.qFactor)) = \(Fmt.usd0(r.couponLeg * notional))",
+                 "coupons expected: \(String(format: "%.1f", r.avgCoupons))"],
+                "Q is the note's own discounted count of coupons that actually get paid — not the number of dates on the schedule, but what survives after barriers and early calls take their toll. Multiply the headline rate by Q and you have the whole income leg, exactly. If you learn one number from this app, learn Q: comparing two income notes means comparing rate times Q, not rate.")
         }
+
         if r.premiumLeg > 0.0005 {
-            out.append("premium leg = E[df·p_call·τ·1{called}] = \(Fmt.usd0(r.premiumLeg * notional))")
+            add("The call premium leg — paid only if called",
+                ["premium leg = E[df × premium × τ × 1{called}] = \(Fmt.usd0(r.premiumLeg * notional))"],
+                "This leg exists only on the paths where the note is redeemed early. If it runs to maturity, this feature pays nothing at all — which is why a call premium and a coupon are not interchangeable, however similar the headline rates look.")
         }
+
         if spec.upside != .none {
             if (spec.upside == .linear || spec.upside == .absolute), r.upUnit > 1e-9 {
-                out.append("U = E[df·gain]/p = \(String(format: "%.4f", r.upUnit)) ⇒ upside = p·U = \(Fmt.usd0(r.upsideLeg * notional))")
+                add("The upside leg — one unit at a time",
+                    ["U = E[df × gain] / participation = \(String(format: "%.4f", r.upUnit))",
+                     "upside leg = participation × U = \(Fmt.pct(spec.participation, 0)) × \(String(format: "%.4f", r.upUnit)) = \(Fmt.usd0(r.upsideLeg * notional))"],
+                    "U is what a single unit of participation is worth. Because the payoff is linear in participation, doubling participation exactly doubles this leg — so you can read a fair participation straight off U instead of guessing and re-pricing.")
             } else {
-                out.append("upside   E[df·gain] = \(Fmt.usd0(r.upsideLeg * notional))")
+                add("The upside leg",
+                    ["upside leg = E[df × payoff above par] × 1000 = \(Fmt.usd0(r.upsideLeg * notional))"],
+                    "A digital pays a fixed amount in the states where it finishes above its strike, so its value is essentially that amount times the discounted probability of clearing the strike. There is no linearity to exploit here, which is why digitals are quoted by level rather than by participation.")
             }
         }
-        out.append("value = par + cpn + up − down = \(Fmt.pct(r.value, 2)) of par")
-        out.append(String(format: "value − par = %+.2f pts of par", (r.value - 1) * 100))
+
+        var identity = "value = par"
+        var numbers = String(format: "%.2f", r.parLeg * 100)
+        if r.couponLeg > 0.0005 { identity += " + coupons"; numbers += String(format: " + %.2f", r.couponLeg * 100) }
+        if r.premiumLeg > 0.0005 { identity += " + premium"; numbers += String(format: " + %.2f", r.premiumLeg * 100) }
+        if r.upsideLeg > 0.0005 { identity += " + upside"; numbers += String(format: " + %.2f", r.upsideLeg * 100) }
+        if r.downsideLeg > 0.0005 { identity += " − downside"; numbers += String(format: " − %.2f", r.downsideLeg * 100) }
+        add("Add the legs up — the identity has to tie",
+            [identity, numbers + String(format: " = %.2f%% of par", r.value * 100),
+             String(format: "value − par = %+.2f pts", (r.value - 1) * 100)],
+            "The legs add to the total with no residual, because every one of them was averaged over the same set of simulated paths. That is what reusing one fixed set of random draws buys you: an identity you can check on paper instead of a black box you have to trust.")
+
+        if spec.chargesOn, let ch = charges {
+            var line = String(format: "offer = mid %.2f", r.value * 100)
+            if ch.skew > 0.0002 { line += String(format: " − skew %.2f", ch.skew * 100) }
+            if ch.overhedge > 0.0002 { line += String(format: " − overhedge %.2f", ch.overhedge * 100) }
+            if ch.corrBA > 0.0002 { line += String(format: " − corr %.2f", ch.corrBA * 100) }
+            if ch.vegaBA > 0.0002 { line += String(format: " − vega %.2f", ch.vegaBA * 100) }
+            if ch.reserve > 0.0002 { line += String(format: " − reserve %.2f", ch.reserve * 100) }
+            add("From a model mid to a price a desk could trade",
+                [line, String(format: "= %.2f%% of par", ch.offer * 100),
+                 spec.ufFee > 0.0001
+                    ? String(format: "issuer net at par = 100 − UF %.2f = %.2f · structuring margin %.2f",
+                             spec.ufFee * 100, (1 - spec.ufFee) * 100, max(1 - spec.ufFee - ch.offer, 0) * 100)
+                    : "no selling concession applied"],
+                "The mid is frictionless and untradeable. Each subtraction is a real cost of hedging something the model cannot replicate — the volatility skew at the barrier strike, barriers and digitals that can only be approximated, correlation that has no clean hedge. The result is the number that appears on a term sheet as the estimated value, and the gap to par is not a markup but the price of the hedge plus distribution.")
+        }
+
+        let readback: String
+        if r.value > 1.005 {
+            readback = "Above par. No issuer could sell this, because the option package is worth more than the money coming in. Something has to be given back: a lower coupon, a tighter cap, a deeper barrier, or a shorter non-call period. Finding which lever does it most cheaply is exactly the structurer's job."
+        } else if r.value < 0.93 {
+            readback = "Well below par. There is a lot of unspent budget here, which means the terms are stingy for the risk being taken — the coupon or participation could go up materially before the note stops working for the issuer."
+        } else {
+            readback = "Inside the range a desk could actually print. Charges and distribution have to come out of the gap to par, and what remains is the structuring margin."
+        }
+        add("Reading the answer",
+            [String(format: "model value %.2f%% of par  ·  %+.2f pts vs par", r.value * 100, (r.value - 1) * 100)],
+            readback)
+
         return out
     }
 
     private var ledgerCard: some View {
-        Card(title: "Feature ledger — each feature's price, in points of par") {
+        Card(title: "Feature ledger — each feature's price, in points of par", help: Teach.blockHelp("ledger")) {
             if ledger.isEmpty {
                 ProgressView("Re-pricing the feature stack…").font(.footnote)
             }
@@ -941,7 +1258,7 @@ public struct DeskView: View {
     }
 
     private var riskCard: some View {
-        Card(title: "Risk (terms frozen, market bumped)") {
+        Card(title: "Risk (terms frozen, market bumped)", help: Teach.blockHelp("risk")) {
             if let g = sens {
                 HStack(spacing: 8) {
                     StatCard(title: "Mark", value: Fmt.pct(g.mark, 1), sub: "of par")
@@ -1011,7 +1328,7 @@ public struct DeskView: View {
     @ViewBuilder
     private var eventCard: some View {
         if spec.call != .none || spec.downside == .kiPut {
-            Card(title: "Event risk — into the discontinuities") {
+            Card(title: "Event risk — into the discontinuities", help: Teach.blockHelp("events")) {
                 if events.isEmpty {
                     ProgressView("Rolling the clock to the events…").font(.footnote)
                 }
@@ -1054,7 +1371,7 @@ public struct DeskView: View {
     }
 
     private var ladderCard: some View {
-        Card(title: "Profile — value & delta vs spot") {
+        Card(title: "Profile — value & delta vs spot", help: Teach.blockHelp("ladder")) {
             if ladder.isEmpty {
                 ProgressView("Bumping the ladder…").font(.footnote)
             } else {
@@ -1104,7 +1421,7 @@ public struct DeskView: View {
     }
 
     private var deskBookCard: some View {
-        Card(title: "Desk book") {
+        Card(title: "Desk book", help: Teach.blockHelp("deskbook")) {
             Text("EXPOSURE").font(.system(size: 10, weight: .bold)).foregroundStyle(.secondary)
             ForEach(exposureLines, id: \.self) { line in
                 HStack(alignment: .top, spacing: 8) {
@@ -1189,9 +1506,15 @@ public struct DeskView: View {
 
     // MARK: repricing
 
+    private func clearTrail() {
+        lastChange = nil; lastDelta = nil; prevSpec = nil; prevValue = nil
+    }
+
     private func reprice() {
         repriceTask?.cancel()
         let snapshot = spec
+        let baseSpec = prevSpec
+        let baseValue = prevValue
         pricing = true
         repriceTask = Task.detached(priority: .userInitiated) {
             // debounce: coalesce slider/curve-drag ticks into one compute
@@ -1204,7 +1527,21 @@ public struct DeskView: View {
             let r = Engine.price(snapshot)
             let g = Engine.sensitivities(snapshot, mark: r.value)
             await MainActor.run {
-                if snapshot == self.spec { self.result = r; self.sens = g }
+                if snapshot == self.spec {
+                    self.result = r; self.sens = g
+                    if let bs = baseSpec, let bv = baseValue, bs != snapshot {
+                        if let note = Teach.describeChange(from: bs, to: snapshot) {
+                            self.lastChange = note
+                            self.lastDelta = r.value - bv
+                        } else {
+                            // never let an old explanation sit next to a new number
+                            self.lastChange = nil
+                            self.lastDelta = nil
+                        }
+                    }
+                    self.prevSpec = snapshot
+                    self.prevValue = r.value
+                }
                 self.pricing = false
             }
             let ch = Engine.charges(snapshot, midValue: r.value, vega: g.vega)

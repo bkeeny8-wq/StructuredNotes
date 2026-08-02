@@ -24,12 +24,78 @@ enum Fmt {
     static func yrs(_ x: Double) -> String { String(format: "%.1fy", x) }
 }
 
+/// Tappable "ⓘ" that expands into three short teaching paragraphs:
+/// what the thing is, which way it moves value, and something to try.
+struct HelpDisclosure: View {
+    let help: BlockHelp
+    @Binding var open: Bool
+    var body: some View {
+        Button { open.toggle() } label: {
+            Image(systemName: open ? "info.circle.fill" : "info.circle")
+                .font(.system(size: 14))
+                .foregroundStyle(open ? Theme.opt : Theme.fee)
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct HelpBody: View {
+    let help: BlockHelp
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            ForEach([("WHAT IT IS", help.what),
+                     ("WHICH WAY IT MOVES VALUE", help.moves),
+                     ("TRY THIS", help.watch)], id: \.0) { head, body in
+                if !body.isEmpty {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(head).font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.opt)
+                        Text(body).font(.system(size: 11.5)).foregroundStyle(Theme.ink)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(red: 0.955, green: 0.965, blue: 0.98), in: RoundedRectangle(cornerRadius: 8))
+    }
+}
+
+/// A compact inline "why this matters" expander, for a single control that
+/// deserves more explanation than a caption can carry.
+struct MiniHelp: View {
+    let title: String
+    let help: BlockHelp
+    @State private var open = false
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Button { open.toggle() } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: open ? "chevron.down" : "questionmark.circle")
+                        .font(.system(size: 10, weight: .semibold))
+                    Text(title).font(.system(size: 10.5, weight: .semibold))
+                }
+                .foregroundStyle(Theme.opt)
+            }
+            .buttonStyle(.plain)
+            if open { HelpBody(help: help) }
+        }
+    }
+}
+
 struct Card<Content: View>: View {
     let title: String
+    var help: BlockHelp? = nil
     @ViewBuilder var content: Content
+    @State private var helpOpen = false
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text(title).font(.system(.headline, design: .serif)).foregroundStyle(Theme.ink)
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(title).font(.system(.headline, design: .serif)).foregroundStyle(Theme.ink)
+                if let h = help { HelpDisclosure(help: h, open: $helpOpen) }
+                Spacer(minLength: 0)
+            }
+            if helpOpen, let h = help { HelpBody(help: h) }
             content
         }
         .padding(14)
@@ -39,21 +105,99 @@ struct Card<Content: View>: View {
     }
 }
 
+/// Unit descriptor that lets a LeverRow show and parse a typed value in its
+/// natural units: display number = raw × scale + offset. Editing writes the
+/// raw value straight back through the same binding the slider uses, so the
+/// two stay in lockstep. Typed values are clamped to the row's range but not
+/// snapped to its step — the whole point of typing is precision the slider
+/// cannot reach.
+struct LeverField: Equatable {
+    var scale: Double = 1
+    var offset: Double = 0
+    var decimals: Int = 1
+    var suffix: String = ""
+    var signed: Bool = false
+
+    func string(_ v: Double) -> String { String(format: "%.\(decimals)f", v * scale + offset) }
+    func raw(from text: String) -> Double? {
+        let t = text.trimmingCharacters(in: .whitespaces)
+        guard let d = Double(t) else { return nil }
+        return (d - offset) / scale
+    }
+
+    static let pct    = LeverField(scale: 100,   decimals: 1, suffix: "%")
+    static let pct0   = LeverField(scale: 100,   decimals: 0, suffix: "%")
+    static let bp     = LeverField(scale: 10000, decimals: 0, suffix: "bp")
+    static let bps    = LeverField(scale: 1,     decimals: 0, suffix: "bp")
+    static let months = LeverField(scale: 1,     decimals: 0, suffix: "m")
+    static let corr   = LeverField(scale: 1,     decimals: 2)
+    static let mult   = LeverField(scale: 1,     decimals: 2, suffix: "×")
+    static let volV   = LeverField(scale: 100,   decimals: 1, suffix: "v")
+    static let volPts = LeverField(scale: 100,   decimals: 0, suffix: "pts", signed: true)
+    static let stepPct = LeverField(scale: 100,  decimals: 0, suffix: "%/yr")
+    static let capPct = LeverField(scale: 100, offset: -100, decimals: 0, suffix: "%")
+}
+
+/// Labeled slider with an optional inline type-in field. Pass `field` to make
+/// the value editable (tap the number, type, Done/blur to commit); leave it
+/// nil and the row shows the read-only `display` string as before.
 struct LeverRow: View {
     let label: String
-    let display: String
+    var display: String = ""
     @Binding var value: Double
     let range: ClosedRange<Double>
     let step: Double
+    var field: LeverField? = nil
+
+    @State private var draft = ""
+    @FocusState private var focused: Bool
+
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack {
                 Text(label).font(.footnote).foregroundStyle(.secondary)
-                Spacer()
-                Text(display).font(.footnote.monospaced().weight(.semibold)).foregroundStyle(Theme.ink)
+                Spacer(minLength: 6)
+                if let f = field {
+                    HStack(spacing: 1) {
+                        TextField("", text: $draft)
+                            .focused($focused)
+                            .keyboardType(f.signed ? .numbersAndPunctuation : .decimalPad)
+                            .multilineTextAlignment(.trailing)
+                            .font(.footnote.monospaced().weight(.semibold))
+                            .foregroundStyle(focused ? Theme.opt : Theme.ink)
+                            .frame(width: 62, alignment: .trailing)
+                            .onSubmit { commit(f) }
+                            .onChange(of: focused) { _, now in if !now { commit(f) } }
+                            .toolbar {
+                                if focused {
+                                    ToolbarItemGroup(placement: .keyboard) {
+                                        Spacer()
+                                        Button("Done") { focused = false }
+                                    }
+                                }
+                            }
+                        if !f.suffix.isEmpty {
+                            Text(f.suffix)
+                                .font(.footnote.monospaced().weight(.semibold))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                } else {
+                    Text(display).font(.footnote.monospaced().weight(.semibold)).foregroundStyle(Theme.ink)
+                }
             }
             Slider(value: $value, in: range, step: step).tint(Theme.ink)
         }
+        .onAppear { if let f = field { draft = f.string(value) } }
+        .onChange(of: value) { _, v in if !focused, let f = field { draft = f.string(v) } }
+    }
+
+    private func commit(_ f: LeverField) {
+        if let r = f.raw(from: draft) {
+            value = min(range.upperBound, max(range.lowerBound, r))
+        }
+        draft = f.string(value)   // normalize the text to what was actually stored
+        focused = false
     }
 }
 
@@ -184,16 +328,20 @@ struct BlockCard<Content: View>: View {
     let on: Bool
     let toggle: () -> Void
     var offHint: String = "Off"
+    var help: BlockHelp? = nil
     @ViewBuilder var content: Content
+    @State private var helpOpen = false
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            HStack {
+            HStack(spacing: 6) {
                 Text(title).font(.system(.headline, design: .serif)).foregroundStyle(Theme.ink)
+                if let h = help { HelpDisclosure(help: h, open: $helpOpen) }
                 Spacer()
                 Toggle("", isOn: Binding(get: { on }, set: { _ in toggle() }))
                     .labelsHidden()
                     .tint(Theme.bond)
             }
+            if helpOpen, let h = help { HelpBody(help: h) }
             if on {
                 content
             } else {
@@ -208,7 +356,7 @@ struct BlockCard<Content: View>: View {
 }
 
 enum OutputTab: String, CaseIterable, Identifiable {
-    case note = "Note", risk = "Risk", math = "The math"
+    case note = "Note", risk = "Risk", math = "The math", learn = "Learn"
     var id: String { rawValue }
 }
 
@@ -223,7 +371,8 @@ struct PillSelector: View {
                 } label: {
                     Text(t.rawValue)
                         .font(.system(size: 13, weight: tab == t ? .bold : .regular))
-                        .padding(.horizontal, 16).padding(.vertical, 7)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10).padding(.vertical, 7)
                         .frame(maxWidth: .infinity)
                         .background(tab == t ? Theme.ink : .clear, in: Capsule())
                         .foregroundStyle(tab == t ? .white : Theme.ink)

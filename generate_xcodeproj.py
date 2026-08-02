@@ -51,6 +51,7 @@ framework_files = [
     "Models.swift",
     "MarketData.swift",
     "PricingEngine.swift",
+    "Teach.swift",
     "Components.swift",
     "DeskView.swift",
 ]
@@ -388,6 +389,7 @@ pbxproj = f'''// !$*UTF8*$!
 				SUPPORTS_MACCATALYST = NO;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_INSTALL_OBJC_HEADER = NO;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2";
 				VERSIONING_SYSTEM = "apple-generic";
