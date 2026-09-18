@@ -4,7 +4,8 @@
 //  Builder on the left; always-price work-through on the right. Every dial is
 //  an input; the output is the note's model value as a percentage of par.
 //  Baskets are assembled by adding underliers one at a time. Coupon and call
-//  schedules live in their own blocks. No solving, no presets, no tabs.
+//  schedules live in their own blocks. No solving, no presets. Four work-
+//  through tabs (Note, Risk, The math, Learn).
 
 import SwiftUI
 import Charts
@@ -28,6 +29,8 @@ public struct DeskView: View {
     @State private var lastDelta: Double?
     @State private var openLesson: Int?
     @State private var pricing = false
+    @State private var rememberedAutocallTrigger: Double = 1.0
+    @State private var rememberedTriggerStep: Double = 0
     @State private var didRestore = false
 
     private let notional = 1000.0
@@ -113,7 +116,7 @@ public struct DeskView: View {
                      value: $spec.volBA, range: 0...0.015, step: 0.001, field: .volV)
             LeverRow(label: "Model / rebalancing reserve",
                      value: $spec.reserveBps, range: 0...50, step: 5, field: .bps)
-            LeverRow(label: "UF — advisor + wholesaler (of reoffer)",
+            LeverRow(label: "UF — advisor + wholesaler (of principal)",
                      value: $spec.ufFee, range: 0...0.05, step: 0.0025, field: .pct)
             Text("Flat-vol Monte Carlo is a mid. These are the desk's costs of being wrong: the KI wing, unreplicable digitals, unhedgeable correlation.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -220,8 +223,13 @@ public struct DeskView: View {
                 .onChange(of: spec.couponObs) { _, o in
                     if o == .european { mutate { $0.memory = false } }
                 }
-                Text("Paid on calendar month-ends from issue (quarterly = 3, 6, 9, … months). Leftover months shorter than one period do not pay a stub.")
-                    .font(.system(size: 10)).foregroundStyle(.secondary)
+                if spec.couponObs == .european {
+                    Text("European pays the full rate × tenor once at maturity — a 10% 3-year coupon is 30% at T, not a single 10% digital. Periodic schedules (monthly / quarterly / …) pay on calendar month-ends from issue.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                } else {
+                    Text("Paid on calendar month-ends from issue (quarterly = 3, 6, 9, … months). Leftover months shorter than one period do not pay a stub.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
                 if spec.coupon == .contingent {
                     LeverRow(label: "Coupon barrier",
                              value: $spec.couponBarrier, range: 0.4...1.0, step: 0.01, field: .pct0)
@@ -245,15 +253,33 @@ public struct DeskView: View {
         BlockCard(title: "Callability",
                   on: spec.call != .none,
                   toggle: { mutate { s in
+                      if s.call == .autocall {
+                          rememberedAutocallTrigger = s.callTrigger
+                          rememberedTriggerStep = s.triggerStep
+                      }
                       s.call = s.call == .none ? .autocall : .none
+                      if s.call == .autocall {
+                          s.callTrigger = rememberedAutocallTrigger
+                          s.triggerStep = rememberedTriggerStep
+                      }
                   } },
                   offHint: "Off — bullet, runs to maturity.",
                   help: Teach.blockHelp("call")) {
             ChoiceChips(options: [(CallFeature.autocall, "Autocall"), (.issuerCall, "Issuer call")],
                         selection: spec.call) { k in
                 mutate { s in
+                    if s.call == .autocall && k == .issuerCall {
+                        rememberedAutocallTrigger = s.callTrigger
+                        rememberedTriggerStep = s.triggerStep
+                    }
                     s.call = k
-                    if k == .issuerCall { s.callTrigger = 1.0; s.triggerStep = 0 }
+                    if k == .issuerCall {
+                        s.callTrigger = 1.0
+                        s.triggerStep = 0
+                    } else if k == .autocall {
+                        s.callTrigger = rememberedAutocallTrigger
+                        s.triggerStep = rememberedTriggerStep
+                    }
                 }
             }
             Group {
@@ -720,8 +746,14 @@ public struct DeskView: View {
         Card(title: "How this note works — advisor view", help: Teach.blockHelp("advisor")) {
             bulletRow(color: Theme.amber, head: "You earn", body: earnLine)
             if spec.call != .none, let r = result {
-                bulletRow(color: Theme.opt, head: "It ends early",
-                          body: "if the \(spec.members.count > 1 ? "basket condition holds" : "underlier is at or above \(Fmt.pct(spec.callTrigger, 0))") on a \(spec.callObs.rawValue.lowercased()) check after \(String(format: "%.0f", spec.nonCallMonths))m — \(Fmt.pct(r.probCalled, 0)) of paths, ~\(String(format: "%.1f", r.expectedLife))y average life.")
+                let life = "\(Fmt.pct(r.probCalled, 0)) of paths, ~\(String(format: "%.1f", r.expectedLife))y average life"
+                if spec.call == .issuerCall {
+                    bulletRow(color: Theme.opt, head: "It ends early",
+                              body: "if the issuer chooses to, on a \(spec.callObs.rawValue.lowercased()) check after \(String(format: "%.0f", spec.nonCallMonths))m. The contract is at the issuer's discretion; the model prices the friendliest rule for you — call whenever the underlier is at or above 100% — so \(life) is an upper bound on what you keep, not the term sheet.")
+                } else {
+                    bulletRow(color: Theme.opt, head: "It ends early",
+                              body: "if the \(spec.members.count > 1 ? "basket condition holds" : "underlier is at or above \(Fmt.pct(spec.callTrigger, 0))") on a \(spec.callObs.rawValue.lowercased()) check after \(String(format: "%.0f", spec.nonCallMonths))m — \(life).")
+                }
             }
             bulletRow(color: Theme.loss, head: "You risk", body: riskLine)
             Text("Plain-English, generated from the live terms — it cannot drift from the structure.")
@@ -744,6 +776,12 @@ public struct DeskView: View {
         if spec.coupon != .none {
             if spec.snowball {
                 parts.append("\(Fmt.pct(spec.snowballRate)) per year, accrued and paid in one sum if the note is called")
+            } else if spec.couponObs == .european {
+                let lump = spec.couponRate * spec.termYears
+                let when = spec.coupon == .guaranteed
+                    ? "regardless of the market"
+                    : "if the \(spec.members.count > 1 && spec.basket == .worstOf ? "worst performer" : "underlier") finishes at or above \(Fmt.pct(spec.couponBarrier, 0))"
+                parts.append("a single \(Fmt.pct(lump)) at maturity (\(Fmt.pct(spec.couponRate)) × \(termStr(spec.termYears))), \(when)")
             } else if spec.coupon == .guaranteed {
                 parts.append("\(Fmt.pct(spec.couponRate)) per year, paid \(spec.couponObs.rawValue.lowercased()) regardless of the market")
             } else {
@@ -755,7 +793,9 @@ public struct DeskView: View {
         }
         switch spec.upside {
         case .linear: parts.append("\(Fmt.pct(spec.participation, 0)) of any gain at maturity\(spec.cap != nil ? ", capped at +\(Fmt.pct((spec.cap ?? 1.3) - 1, 0))" : "")")
-        case .digital, .digitalPlus: parts.append("a fixed \(Fmt.pct(spec.digital, 0)) return if the final level is at or above \(Fmt.pct(spec.digitalStrike, 0))")
+        case .digital: parts.append("a fixed \(Fmt.pct(spec.digital, 0)) return if the final level is at or above \(Fmt.pct(spec.digitalStrike, 0))")
+        case .digitalPlus:
+            parts.append("a \(Fmt.pct(spec.digital, 0)) minimum if the final level is at or above \(Fmt.pct(spec.digitalStrike, 0)), then \(String(format: "%.2g", spec.digiPlusLeverage))× of any further gain")
         case .absolute: parts.append("gains in both directions down to \(Fmt.pct(spec.absoluteKO, 0))")
         case .none: break
         }
@@ -797,7 +837,7 @@ public struct DeskView: View {
                 }
                 Text("P(called) \(Fmt.pct(r.probCalled, 0)) · P(loss) \(Fmt.pct(r.probLoss, 0)) · E[life] \(String(format: "%.1f", r.expectedLife))y · avg coupons \(String(format: "%.1f", r.avgCoupons))")
                     .font(.system(size: 12, design: .monospaced))
-                Text("Runs to maturity un-called and clean: \(Fmt.pct(max(1 - r.probCalled - r.probLoss, 0), 0)).")
+                Text("Runs to maturity un-called and clean: \(Fmt.pct(max(1 - r.probCalled - r.probLoss, 0), 0)). P(loss) is a principal shortfall at maturity, not a knock that recovered through par.")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
                 Text("Risk-neutral pricing weights — the right input for valuation, the wrong input for a client's expected return.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -1022,8 +1062,13 @@ public struct DeskView: View {
             }
         }
         if spec.call != .none {
-            var call = "\(spec.call == .autocall ? "autocall" : "issuer call") \(Fmt.pct(spec.callTrigger, 0)) (\(spec.callObs.rawValue.lowercased()))"
-            if spec.triggerStep > 0 { call += " −\(Int(spec.triggerStep * 100))%/yr" }
+            var call: String
+            if spec.call == .autocall {
+                call = "autocall \(Fmt.pct(spec.callTrigger, 0)) (\(spec.callObs.rawValue.lowercased()))"
+                if spec.triggerStep > 0 { call += " −\(Int(spec.triggerStep * 100))%/yr" }
+            } else {
+                call = "issuer call at discretion (\(spec.callObs.rawValue.lowercased()); priced as if ≥100%)"
+            }
             if spec.callPremium > 0 { call += " + \(Fmt.pct(spec.callPremium)) premium" }
             call += " after \(String(format: "%.0f", spec.nonCallMonths))m"
             parts.append(call)
@@ -1081,6 +1126,10 @@ public struct DeskView: View {
             .chartForegroundStyleScale(["Note": Theme.opt, "Direct": Color.gray])
             .chartYAxisLabel("$ per $1,000")
             .frame(height: 250)
+            if spec.downside == .kiPut && spec.protObs != .european {
+                Text("Drawn as European KI: knock is inferred from the final level only. A monitored knock that recovered through the barrier is drawn as clean.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
             if spec.coupon != .none {
                 Text("Coupons ride on top of redemption.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -1183,7 +1232,7 @@ public struct DeskView: View {
         if spec.downside != .par {
             add("The downside you sold — this is what funds the note",
                 ["downside leg = E[df × shortfall] × 1000 = \(Fmt.usd0(r.downsideLeg * notional))",
-                 "P(loss at maturity) = \(Fmt.pct(r.probLoss, 0))"],
+                 "P(principal loss at maturity) = \(Fmt.pct(r.probLoss, 0))"],
                 "On the paths where protection fails, the note repays less than par and the shortfall is money that stays with the issuer. Averaged and discounted, that is the market price of your downside. Every coupon and every point of participation in this note was bought with it.")
         }
 
@@ -1208,12 +1257,21 @@ public struct DeskView: View {
         }
 
         if spec.upside != .none {
+            let linearUncapped = spec.upside == .linear && spec.cap == nil
             if (spec.upside == .linear || spec.upside == .absolute), r.upUnit > 1e-9 {
-                add("The upside leg — one unit at a time",
-                    ["U = \(String(format: "%.4f", r.upUnit))",
-                     "participation = \(String(format: "%.2f", spec.participation)) (\(Fmt.pct(spec.participation, 0)))",
-                     "upside leg = participation × U = \(String(format: "%.2f", spec.participation)) × \(String(format: "%.4f", r.upUnit)) = \(String(format: "%.4f", r.upsideLeg)) = \(Fmt.pct(r.upsideLeg, 2)) of par = \(Fmt.usd0(r.upsideLeg * notional)) per $1,000"],
-                    "U is what a single unit of participation is worth. Because the payoff is linear in participation, doubling participation exactly doubles this leg — so you can read a fair participation straight off U instead of guessing and re-pricing.")
+                if linearUncapped {
+                    add("The upside leg — one unit at a time",
+                        ["U = \(String(format: "%.4f", r.upUnit))",
+                         "participation = \(String(format: "%.2f", spec.participation)) (\(Fmt.pct(spec.participation, 0)))",
+                         "upside leg = participation × U = \(String(format: "%.2f", spec.participation)) × \(String(format: "%.4f", r.upUnit)) = \(String(format: "%.4f", r.upsideLeg)) = \(Fmt.pct(r.upsideLeg, 2)) of par = \(Fmt.usd0(r.upsideLeg * notional)) per $1,000"],
+                        "U is what a single unit of participation is worth. Because the payoff is linear in participation, doubling participation exactly doubles this leg — so you can read a fair participation straight off U instead of guessing and re-pricing.")
+                } else {
+                    add("The upside leg — U is a residual unit, not a scalable participation price",
+                        ["U = \(String(format: "%.4f", r.upUnit))",
+                         "participation = \(String(format: "%.2f", spec.participation)) (\(Fmt.pct(spec.participation, 0)))",
+                         "upside leg = participation × U = \(String(format: "%.2f", spec.participation)) × \(String(format: "%.4f", r.upUnit)) = \(String(format: "%.4f", r.upsideLeg)) = \(Fmt.pct(r.upsideLeg, 2)) of par = \(Fmt.usd0(r.upsideLeg * notional)) per $1,000"],
+                        "The identity still ties because U is defined as the upside cash divided by the participation lever. That does not make the payoff linear in that lever: a binding cap, or the down-leg of an absolute note (which uses its own participation), will not double if you double the up-side participation. Read U as a residual, not a price you can scale.")
+                }
             } else {
                 add("The upside leg",
                     ["upside leg = E[df × payoff above par] × 1000 = \(Fmt.usd0(r.upsideLeg * notional))"],
@@ -1285,7 +1343,7 @@ public struct DeskView: View {
                 .padding(.vertical, 4)
                 .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
             }
-            Text("Each row re-prices the build with one more feature at the same levers. Green adds value to the holder; red is value sold.")
+            Text("Each row re-prices the build with one more feature at the same levers, on \(Engine.fastPaths.formatted()) paths rather than the headline \(Engine.fullPaths.formatted()). Green adds value to the holder; red is value sold. Do not expect 0.1pt agreement with the Note tab.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
@@ -1300,9 +1358,12 @@ public struct DeskView: View {
                                  sub: "per 1% spot", color: g.delta >= 0 ? Theme.bond : Theme.loss)
                         StatCard(title: "Vega", value: String(format: "%+.2f", g.vega * notional),
                                  sub: "per vol pt", color: g.vega >= 0 ? Theme.bond : Theme.loss)
-                        StatCard(title: "Gamma", value: g.gamma >= 0 ? "Long" : "Short",
-                                 sub: g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs",
-                                 color: g.gamma >= 0 ? Theme.bond : Theme.loss)
+                        StatCard(title: "Gamma",
+                                 value: abs(g.gamma) * notional < 0.5 ? "≈0" : (g.gamma >= 0 ? "Long" : "Short"),
+                                 sub: abs(g.gamma) * notional < 0.5 ? "flat / sampling noise"
+                                    : (g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs"),
+                                 color: abs(g.gamma) * notional < 0.5 ? Theme.fee
+                                    : (g.gamma >= 0 ? Theme.bond : Theme.loss))
                     }
                     HStack(spacing: 8) {
                         StatCard(title: "Correlation",

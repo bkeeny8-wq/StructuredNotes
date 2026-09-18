@@ -82,7 +82,7 @@ public enum Teach {
                 watch: "Drag the term across a call date boundary and watch the expected life on the Note tab shift. Turn the Asian tail on and off — the effect is small and two-sided, which is itself worth learning.")
         case "coupon":
             return BlockHelp(
-                what: "The income leg. Guaranteed coupons pay in every scenario. Contingent coupons pay only when the underlying is at or above the coupon barrier on the observation date.",
+                what: "The income leg. Guaranteed coupons pay in every scenario. Contingent coupons pay only when the underlying is at or above the coupon barrier on the observation date. A European coupon pays the full rate × tenor once at maturity — a 10% 3-year European is 30% at T, not a single 10% digital.",
                 moves: "Value rises one-for-one with the coupon rate against the annuity factor Q shown on the math tab. Anything that makes coupons harder to earn — a higher barrier, more frequent observations, a call that ends the note early — lowers value at the same headline rate.",
                 watch: "Set a coupon with everything else off and watch value climb above par. No issuer can sell that. Something has to be sold to pay for it, which is what the downside block does.")
         case "call":
@@ -114,7 +114,7 @@ public enum Teach {
             return TeachCopy.chargesHelp
         case "payoff":
             return BlockHelp(
-                what: "What you get back at maturity for every possible level of the underlying, per $1,000. The dashed line is what you would have had by simply owning the market instead, so the gap between the two lines is what the structure did for you — or to you.",
+                what: "What you get back at maturity for every possible level of the underlying, per $1,000. The dashed line is what you would have had by simply owning the market instead, so the gap between the two lines is what the structure did for you — or to you. This is a European slice: knock is inferred from the final level, so a monitored knock-in that touched and recovered is drawn as if it never knocked.",
                 moves: "",
                 watch: "Find the places where the solid line jumps or bends. Every one of those is a barrier or a strike, and every one of them is a point where a small market move changes your outcome a lot. Coupons are not drawn here; they ride on top of whatever this chart shows.")
         case "decomposition":
@@ -134,7 +134,7 @@ public enum Teach {
                 watch: "Read these as pricing weights, not as a forecast. They come from a risk-neutral simulation, which deliberately assumes every asset drifts at the funding rate rather than at whatever you believe equities will return. That assumption is what makes the price arbitrage-free, and it is why these numbers are the right input for valuation and the wrong input for a client's expected return.")
         case "advisor":
             return BlockHelp(
-                what: "The same structure written the way you would say it out loud to a client: what they earn, how it can end early, and what they are risking.",
+                what: "The same structure written the way you would say it out loud to a client: what they earn, how it can end early, and what they are risking. An issuer call is described as the bank's discretion; the 100% rule is the pricing assumption, not the contract.",
                 moves: "",
                 watch: "Every sentence here is generated from the live build, so it can never drift from the actual terms. If a sentence surprises you, the build is not what you thought it was.")
         case "risk":
@@ -159,7 +159,7 @@ public enum Teach {
                 watch: "Everything the desk is long, you are short, and vice versa. Reading this makes the pricing intuitive — you can see why the desk cares about the barrier strike, the observation dates, and the correlation, because those are the things it has to hedge.")
         case "ledger":
             return BlockHelp(
-                what: "The note rebuilt one feature at a time, priced at every step. Each row's change is that feature's price in points of par.",
+                what: "The note rebuilt one feature at a time, priced at every step on the fast 1,600-path set (the headline mark uses 4,000). Each row's change is that feature's price in points of par — deltas versus the Note tab will not match to a tenth of a point.",
                 moves: "",
                 watch: "Order matters: a feature's price depends on what is already switched on, because features interact. A barrier is worth much more on a worst-of than on a single index. Read the ledger as one particular path through the build, not as a set of independent prices.")
         default:
@@ -179,11 +179,23 @@ public enum Teach {
         if a.members != b.members {
             if b.members.count > a.members.count {
                 let added = b.members.filter { !a.members.contains($0) }.joined(separator: ", ")
+                if b.basket == .weighted {
+                    return ChangeNote(
+                        label: "Added \(added) to the basket",
+                        why: "A new name in a weighted basket dilutes every existing weight. You have more diversification, not a worse worst-of — the average usually gets safer, so the same terms are typically worth more. The move is two-sided if the name you added is much more volatile than what was already there.",
+                        twoSided: true)
+                }
                 return ChangeNote(
                     label: "Added \(added) to the basket",
                     why: "Every name you add is another way for the worst performer to be worse. A worst-of over more names has a lower expected minimum, so barriers break more often and the note is worth less at the same coupon. Run it the other way and you see why issuers add names when a client asks for a bigger coupon.")
             }
             let dropped = a.members.filter { !b.members.contains($0) }.joined(separator: ", ")
+            if b.basket == .weighted {
+                return ChangeNote(
+                    label: "Removed \(dropped) from the basket",
+                    why: "Fewer names in a weighted basket concentrates the remaining weights. That can help or hurt depending on which name left — it is not the worst-of story where fewer names is always kinder.",
+                    twoSided: true)
+            }
             return ChangeNote(
                 label: "Removed \(dropped) from the basket",
                 why: "Fewer names means a less punishing worst performer, so the protection you sold is worth less to the desk and the note is worth more as built.")
@@ -198,7 +210,8 @@ public enum Teach {
         if a.weights != b.weights && b.basket == .weighted {
             return ChangeNote(
                 label: "Basket weights changed",
-                why: "Weights are normalised to sum to 100%, so raising one name lowers the others proportionally. Concentrating the basket into a single volatile name makes it behave more like that one name — and less like a diversified average — which is worth less to you at the same terms.")
+                why: "Weights are normalised to sum to 100%, so raising one name lowers the others proportionally. Concentrating into a high-vol name usually makes the same terms worth less; concentrating into a low-vol name usually makes them worth more. Watch the measured Δ rather than assuming diversification always helps.",
+                twoSided: true)
         }
         if moved(a.correlation, b.correlation) {
             return b.correlation > a.correlation
@@ -254,7 +267,7 @@ public enum Teach {
         if a.couponObs != b.couponObs {
             return ChangeNote(
                 label: "Coupon schedule → \(b.couponObs.rawValue)",
-                why: "The schedule changes both timing and conditionality. More observations mean more chances to clear the barrier and get paid sooner, which helps. It also means more separate digital tests. A European coupon pays once at maturity on a single look.",
+                why: "The schedule changes both timing and conditionality. More observations mean more chances to clear the barrier and get paid sooner, which helps. It also means more separate digital tests. A European coupon pays the full rate × tenor once at maturity — a 10% 3-year European is 30% at T, not a single 10% digital.",
                 twoSided: true)
         }
         if moved(a.couponBarrier, b.couponBarrier) {
@@ -522,7 +535,7 @@ public enum Teach {
                goal: "Learn that features are not free — they are purchases.",
                steps: ["A single volatile name, three years, a 10.5% guaranteed coupon, and nothing sold against it.",
                        "Read the value, then find the coupon strip in the trader decomposition."],
-               notice: "The value is far above par — around 116 — which means no issuer on earth could sell this note. You are asking for roughly thirty points of coupon out of a fourteen-point funding budget. The coupon has to be paid for, and the only things you own that are worth selling are your upside and your downside.",
+               notice: "The value is far above par, which means no issuer on earth could sell this note. You are asking for a coupon strip worth more than the funding budget that pays for it. The coupon has to be paid for, and the only things you own that are worth selling are your upside and your downside.",
                spec: build { s in
                    s.members = ["NVDA"]
                    s.coupon = .guaranteed; s.couponRate = 0.105; s.couponObs = .quarterly
@@ -534,7 +547,7 @@ public enum Teach {
                steps: ["Lesson 2's exact build, with one thing added: a 60% knock-in put.",
                        "Compare the value with Lesson 2, then read the downside leg in the decomposition.",
                        "Now switch the underlying to SPX and watch what happens to the same barrier."],
-               notice: "The value falls roughly sixteen points and lands almost exactly at par — this note can actually be issued. That sixteen points is the market price of your downside, and it is precisely what bought the coupon. Then swap in a low-volatility index and the same 60% barrier is suddenly worth almost nothing, so the note flies back above par. That is why the street writes income notes on volatile names and on worst-of baskets rather than on a single broad index: a barrier only funds a coupon if it might actually be reached.",
+               notice: "The value falls by about the size of that coupon overpay and lands near par — this note can actually be issued. That drop is the market price of your downside, and it is precisely what bought the coupon. Then swap in a low-volatility index and the same 60% barrier is suddenly worth almost nothing, so the note flies back above par. That is why the street writes income notes on volatile names and on worst-of baskets rather than on a single broad index: a barrier only funds a coupon if it might actually be reached.",
                spec: build { s in
                    s.members = ["NVDA"]
                    s.coupon = .guaranteed; s.couponRate = 0.105; s.couponObs = .quarterly

@@ -187,4 +187,60 @@ final class EngineGoldenTests: XCTestCase {
             XCTAssertTrue(r.callDist.last?.lumped == true)
         }
     }
+
+    func testParBondHasZeroProbLoss() {
+        let r = Engine.price(Instrument.initial, paths: paths)
+        XCTAssertEqual(r.probLoss, 0, accuracy: 1e-12)
+    }
+
+    func testProbLossIsPrincipalShortfallNotKnock() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        // Knocked but recovered through par: no principal shortfall.
+        let (_, recovered) = Engine.components(perf: 1.05, knocked: true, s: s)
+        XCTAssertEqual(recovered, 0, accuracy: 1e-12)
+        // Knocked and below par: loss from par, not from the barrier.
+        let (_, shortfall) = Engine.components(perf: 0.80, knocked: true, s: s)
+        XCTAssertEqual(shortfall, 0.20, accuracy: 1e-12)
+        // Clean finish below par but above the barrier: European KI does not knock.
+        let (_, clean) = Engine.components(perf: 0.90, knocked: false, s: s)
+        XCTAssertEqual(clean, 0, accuracy: 1e-12)
+    }
+
+    func testEuropeanCouponPaysRateTimesTenorAtMaturity() {
+        var s = guaranteedNote(termYears: 3, rate: 0.10, obs: .european)
+        let r = Engine.price(s, paths: paths)
+        let expected = 0.10 * 3 * fundingDF(s, 3)
+        XCTAssertEqual(r.couponLeg, expected, accuracy: 1e-10)
+        XCTAssertEqual(r.avgCoupons, 1, accuracy: 1e-12)
+        XCTAssertEqual(r.qFactor, 3 * fundingDF(s, 3), accuracy: 1e-10)
+    }
+
+    func testOneMonthThetaIsNotANoOp() {
+        var s = Instrument.initial
+        s.termYears = 1.0 / 12.0
+        let mark = Engine.price(s, paths: paths).value
+        let g = Engine.sensitivities(s, mark: mark)
+        XCTAssertGreaterThan(abs(g.theta1m), 1e-8)
+        // Pull to par: a shorter remaining life raises the zero.
+        XCTAssertGreaterThan(g.theta1m, 0)
+    }
+
+    func testFirstCallEventRedeemsAtParAboveTrigger() {
+        var s = Instrument.initial
+        s.call = .autocall
+        s.callTrigger = 1.0
+        s.callObs = .quarterly
+        s.nonCallMonths = 0
+        s.termYears = 3
+        XCTAssertEqual(Engine.firstCallMonth(s), 3)
+        let ev = Engine.eventScenarios(s)
+        let first = ev.first { $0.title.contains("first call") }
+        XCTAssertNotNil(first)
+        let above = first?.rows.first { abs($0.spot - 1.04) < 1e-9 }
+        XCTAssertEqual(above?.mark ?? 0, 1.0, accuracy: 1e-8)
+        let below = first?.rows.first { abs($0.spot - 0.96) < 1e-9 }
+        XCTAssertNotEqual(below?.mark ?? 1.0, 1.0, accuracy: 1e-4)
+    }
 }

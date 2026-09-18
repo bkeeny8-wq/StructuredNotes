@@ -1,66 +1,67 @@
 #!/usr/bin/env python3
 """Generate StructuredNotesDesk.xcodeproj with Framework + Example + Tests.
 
-Regenerating mints new UUIDs (noisy diff). Prefer editing project.pbxproj in
-place when adding a file; this script is the template if the project needs a
-rebuild.
+IDs are stable hashes of names (not uuid4), so a regenerate is a meaningful
+diff. Prefer editing project.pbxproj in place when adding a file; this script
+is the template if the project needs a rebuild.
 """
 
 from __future__ import annotations
 
+import hashlib
 import os
-import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PROJ = ROOT / "StructuredNotesDesk.xcodeproj"
 PROJ.mkdir(exist_ok=True)
 
-def uid() -> str:
-    return uuid.uuid4().hex[:24].upper()
+def uid(key: str) -> str:
+    """Stable 24-char hex ID from a name, so regenerating is not a noisy diff."""
+    return hashlib.md5(f"StructuredNotesDesk:{key}".encode()).hexdigest()[:24].upper()
 
-# Stable-ish IDs for readability / diffs
+# Stable IDs for readability / diffs
 IDS = {
-    "project": uid(),
-    "framework_target": uid(),
-    "app_target": uid(),
-    "framework_product": uid(),
-    "app_product": uid(),
-    "sources_group": uid(),
-    "framework_group": uid(),
-    "example_group": uid(),
-    "products_group": uid(),
-    "assets_ref": uid(),
-    "framework_sources": uid(),
-    "framework_frameworks": uid(),
-    "framework_resources": uid(),
-    "framework_headers": uid(),
-    "app_sources": uid(),
-    "app_frameworks": uid(),
-    "app_resources": uid(),
-    "project_config_list": uid(),
-    "framework_config_list": uid(),
-    "app_config_list": uid(),
-    "project_debug": uid(),
-    "project_release": uid(),
-    "framework_debug": uid(),
-    "framework_release": uid(),
-    "app_debug": uid(),
-    "app_release": uid(),
-    "framework_dep": uid(),
-    "embed_phase": uid(),
-    "copy_framework": uid(),
-    "test_target": uid(),
-    "test_product": uid(),
-    "test_group": uid(),
-    "test_sources": uid(),
-    "test_frameworks": uid(),
-    "test_resources": uid(),
-    "test_dep": uid(),
-    "test_target_dep": uid(),
-    "test_config_list": uid(),
-    "test_debug": uid(),
-    "test_release": uid(),
+    "project": uid("project"),
+    "framework_target": uid("framework_target"),
+    "app_target": uid("app_target"),
+    "framework_product": uid("framework_product"),
+    "app_product": uid("app_product"),
+    "sources_group": uid("sources_group"),
+    "framework_group": uid("framework_group"),
+    "example_group": uid("example_group"),
+    "products_group": uid("products_group"),
+    "assets_ref": uid("assets_ref"),
+    "framework_sources": uid("framework_sources"),
+    "framework_frameworks": uid("framework_frameworks"),
+    "framework_resources": uid("framework_resources"),
+    "framework_headers": uid("framework_headers"),
+    "app_sources": uid("app_sources"),
+    "app_frameworks": uid("app_frameworks"),
+    "app_resources": uid("app_resources"),
+    "project_config_list": uid("project_config_list"),
+    "framework_config_list": uid("framework_config_list"),
+    "app_config_list": uid("app_config_list"),
+    "project_debug": uid("project_debug"),
+    "project_release": uid("project_release"),
+    "framework_debug": uid("framework_debug"),
+    "framework_release": uid("framework_release"),
+    "app_debug": uid("app_debug"),
+    "app_release": uid("app_release"),
+    "framework_dep": uid("framework_dep"),
+    "embed_phase": uid("embed_phase"),
+    "copy_framework": uid("copy_framework"),
+    "test_target": uid("test_target"),
+    "test_product": uid("test_product"),
+    "test_group": uid("test_group"),
+    "test_sources": uid("test_sources"),
+    "test_frameworks": uid("test_frameworks"),
+    "test_resources": uid("test_resources"),
+    "test_dep": uid("test_dep"),
+    "test_target_dep": uid("test_target_dep"),
+    "test_config_list": uid("test_config_list"),
+    "test_debug": uid("test_debug"),
+    "test_release": uid("test_release"),
 }
 
 framework_files = [
@@ -74,21 +75,21 @@ framework_files = [
 
 header_name = "StructuredNotesDesk.h"
 
-file_ids = {name: uid() for name in framework_files}
-file_ids[header_name] = uid()
-file_ids["StructuredNotesDeskApp.swift"] = uid()
-file_ids["Info.plist"] = uid()
-file_ids["EngineGoldenTests.swift"] = uid()
+file_ids = {name: uid(f"file:{name}") for name in framework_files}
+file_ids[header_name] = uid(f"file:{header_name}")
+file_ids["StructuredNotesDeskApp.swift"] = uid("file:StructuredNotesDeskApp.swift")
+file_ids["Info.plist"] = uid("file:Info.plist")
+file_ids["EngineGoldenTests.swift"] = uid("file:EngineGoldenTests.swift")
 
 # Build file IDs (PBXBuildFile)
-bf = {name: uid() for name in framework_files}
-bf["app_main"] = uid()
-bf["link_framework"] = uid()
-bf["embed_framework"] = uid()
-bf["header"] = uid()
-bf["assets"] = uid()
-bf["test_main"] = uid()
-bf["test_link_framework"] = uid()
+bf = {name: uid(f"bf:{name}") for name in framework_files}
+bf["app_main"] = uid("bf:app_main")
+bf["link_framework"] = uid("bf:link_framework")
+bf["embed_framework"] = uid("bf:embed_framework")
+bf["header"] = uid("bf:header")
+bf["assets"] = uid("bf:assets")
+bf["test_main"] = uid("bf:test_main")
+bf["test_link_framework"] = uid("bf:test_link_framework")
 
 framework_build_files = "\n".join(
     f"\t\t{bf[n]} /* {n} in Sources */ = {{isa = PBXBuildFile; fileRef = {file_ids[n]} /* {n} */; }};"

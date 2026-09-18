@@ -35,7 +35,7 @@ public struct PricingResult: Equatable, Sendable {
     public var qFactor: Double
     public var upUnit: Double
     public var probCalled: Double
-    public var probLoss: Double
+    public var probLoss: Double      // P(principal shortfall at maturity), not knock frequency
     public var expectedLife: Double
     public var avgCoupons: Double
     public var callDist: [CallBucket]
@@ -480,8 +480,9 @@ public enum Engine {
                         uacc += up * df / s.participation
                     }
                     out.life += t
-                    let lost = !locked && (s.downside == .buffer ? zNow < s.protection : (s.downside == .kiPut && knocked))
-                    if lost { out.loss += 1 }
+                    // Principal loss, not knock: a monitored KI that recovers through
+                    // par has knocked = true but loss = 0.
+                    if loss > 1e-12 { out.loss += 1 }
                 }
             }
             out.cpnPV += cpv; out.parPV += parpv; out.premPV += prempv
@@ -563,7 +564,11 @@ public enum Engine {
         }
         var s3 = s; s3.spreadShort += 0.001; s3.spreadLong += 0.001
         let fdv = simulate(s3, paths: fastPaths).pv - base
-        var s4 = s; s4.termYears = max(1.0 / 12.0, s.termYears - 1.0 / 12.0)
+        // A 1-month note cannot roll a further month (the max(1/12, T−1/12)
+        // clamp is a no-op). Age a week instead so pull-to-par still shows.
+        let month = 1.0 / 12.0
+        let thetaBump = s.termYears > month + 1e-9 ? month : min(s.termYears * 0.5, 7.0 / 365.0)
+        var s4 = s; s4.termYears = max(1.0 / 365.0, s.termYears - thetaBump)
         let theta = simulate(s4, paths: fastPaths).pv - base
         return Sensitivities(mark: mark, delta: (up - dn) / 0.02, gamma: up + dn - 2 * base,
                              vega: (f(1, 0.01) - f(1, -0.01)) / 2,
@@ -652,23 +657,61 @@ public enum Engine {
             }
             out.append(EventBlock(title: title, rows: rows, caption: caption))
         }
-        if s.call != .none, s.termYears > s.nonCallYears + 0.05 {
+        // Do not reuse a freshly issued remaining-life note: the engine's first
+        // call check is one period after t=0, so that would land the chart a
+        // period late and never redeem spots already through the trigger.
+        if s.call != .none, let firstM = firstCallMonth(s) {
+            let tFirst = Double(firstM) / 12.0
             var s2 = s
-            s2.termYears = max(0.25, s.termYears - s.nonCallYears)
+            s2.termYears = max(1.0 / 12.0, s.termYears - tFirst)
             s2.nonCallMonths = 0
-            block(s2, level: s.callTrigger,
-                  title: "At the first call observation · spot around the \(Int(s.callTrigger * 100))% trigger",
-                  caption: "Delta flips through the trigger — the desk sells the rally that calls the note away.")
+            let trigger = s.callTrigger
+            let calledValue = 1.0
+                + s.callPremium * tFirst
+                + ((s.coupon != .none && s.snowball) ? s.snowballRate * tFirst : 0)
+            func valueAt(_ lvl: Double) -> Double {
+                if lvl >= trigger - 1e-12 { return calledValue }
+                return simulate(s2, spotScale: lvl, paths: fastPaths).pv
+            }
+            let rows = [trigger - 0.04, trigger - 0.015, trigger,
+                        trigger + 0.015, trigger + 0.04].map { lvl -> ScenarioRow in
+                let mk = valueAt(lvl)
+                let up = valueAt(lvl * 1.01)
+                return ScenarioRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
+            }
+            out.append(EventBlock(
+                title: "At the first call observation · spot around the \(Int(s.callTrigger * 100))% trigger",
+                rows: rows,
+                caption: "This is the observation date itself: at or above the trigger the note is already par (plus any call premium). Below it, the remaining life continues. Delta flips through the trigger."))
         }
         if s.downside == .kiPut {
             var s3 = s
             s3.termYears = 1.0 / 12.0
             s3.nonCallMonths = 24
+            s3.call = .none
+            s3.coupon = .none
+            s3.snowball = false
             block(s3, level: s.protection,
                   title: "One month to maturity · spot around the \(Int(s.protection * 100))% KI",
-                  caption: "The cliff: delta concentrates just above the barrier and dies below it — the hardest month in the book.")
+                  caption: "The cliff: delta concentrates just above the barrier and dies below it — the hardest month in the book. Coupons and calls are stripped here so the barrier is the only discontinuity.")
         }
         return out
+    }
+
+    /// First call-observation month from issue, or nil if none falls before maturity.
+    /// Mirrors `simulate`: call dates are calendar month-ends, never the final step.
+    public static func firstCallMonth(_ s: Instrument) -> Int? {
+        guard s.call != .none else { return nil }
+        let termMonths = max(1, Int((s.termYears * 12.0).rounded()))
+        let step = s.callObs.monthsPerPeriod
+        let lockout = Int(s.nonCallMonths.rounded())
+        guard step > 0 else { return nil }
+        var m = step
+        while m < termMonths {
+            if m >= lockout { return m }
+            m += step
+        }
+        return nil
     }
 
     /// Rebuild the instrument one feature at a time and price each stage.

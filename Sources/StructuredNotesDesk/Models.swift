@@ -175,7 +175,7 @@ public struct Instrument: Hashable, Sendable, Codable {
     public var corrBA: Double           // correlation bid-ask half-width
     public var volBA: Double            // vol bid-ask, charged on |vega|
     public var reserveBps: Double       // flat model/rebalancing reserve
-    public var ufFee: Double            // underwriting fee: advisor + wholesaler, % of reoffer
+    public var ufFee: Double            // underwriting fee: advisor + wholesaler, % of principal
 
     public var nonCallYears: Double { nonCallMonths / 12.0 }
 

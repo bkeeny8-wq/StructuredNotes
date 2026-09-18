@@ -33,8 +33,6 @@ public struct Asset: Hashable, Sendable {
 
 public enum Market {
     public static let asOf = "MODELED RE-MARK (synthetic, not a live feed) — vols bumped +2pts idx / +3pts single off the Jul 2026 snapshot"
-    /// ^TNX ~4.60% (Yahoo). Substitute the term-matched tenor.
-    public static let ust = 0.046
 
     public static let catalog: [Asset] = [
         Asset(ticker: "SPX", name: "S&P 500", cls: .indexETF, spot: 7498.96, vol: 0.186, div: 0.0105, sourced: true, tapeCount: 15708, source: "Close 7/22 Yahoo · VIX 16.6 Cboe · yld Multpl"),
