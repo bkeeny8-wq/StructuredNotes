@@ -74,7 +74,7 @@ public enum Teach {
             return BlockHelp(
                 what: "What the note watches. One name, or up to four in a basket. Nothing about the note's payoff refers to dollars — everything is measured as a percentage of each name's level on the pricing date.",
                 moves: "Higher volatility means a wider range of outcomes, which makes any protection you sold more valuable to the desk. A worst-of basket is the cheapest way to manufacture volatility without buying it: the worst of three names is far more likely to be down than any one of them.",
-                watch: "Add a third name and watch value fall at the same coupon. Then switch the basket from worst-of to weighted and watch it jump back. That gap is the correlation premium. The local-vol toggle is off by default; turn it on to put a one-parameter smile in the paths so a knock-in can see wing vol instead of only a skew charge.")
+                watch: "Add a third name and watch value fall at the same coupon. Then switch the basket from worst-of to weighted and watch it jump back. That gap is the correlation premium. Local vol and crash corr are off by default; turn them on to put a smile and a selloff-corr spike in the paths so a knock-in can see those, not only as charges.")
         case "tenor":
             return BlockHelp(
                 what: "How long the note lives, and how the final level is measured. The Asian tail replaces the single closing level with an average of the last few daily fixings.",
@@ -219,6 +219,20 @@ public enum Teach {
                              why: "When names move together, the worst performer is not much worse than the average, so a worst-of behaves more like a single name. That helps you as the holder. The desk is short this — there is no clean way to hedge correlation, which is why the charge stack carries a correlation bid-ask.")
                 : ChangeNote(label: "Correlation \(String(format: "%.2f", a.correlation)) → \(String(format: "%.2f", b.correlation))",
                              why: "Lower correlation means the names scatter, so the worst of them is worse. More dispersion means more downside sold, and the note is worth less as built.")
+        }
+        if a.crashCorrOn != b.crashCorrOn {
+            return b.crashCorrOn
+                ? ChangeNote(label: "Crash corr on",
+                             why: "Pairwise ρ now rises as the basket trades down — ρ(z) = ρ + slope × max(1−z, 0) × 10, via a fresh Cholesky at each step. A desk uses a term/spot corr surface; this is a one-parameter cartoon. The effect is two-sided: a worst-of can cheapen (less dispersion in the left tail) while a weighted-basket KI gets more systematic left-tail variance.",
+                             twoSided: true)
+                : ChangeNote(label: "Crash corr off",
+                             why: "Back to one equicorrelation for the whole path. The selloff spike is gone; the correlation bid-ask in the charge stack is once again the only corr adjustment.")
+        }
+        if moved(a.crashCorrSlope, b.crashCorrSlope) {
+            return ChangeNote(
+                label: "Crash-corr slope \(String(format: "%.2f", a.crashCorrSlope)) → \(String(format: "%.2f", b.crashCorrSlope)) per 10% drop",
+                why: "Steeper spike means names couple harder exactly when the basket is down. Watch worst-of and weighted separately — they often move opposite ways. This is not a calibrated surface.",
+                twoSided: true)
         }
         if moved(a.volShift, b.volShift) {
             return ChangeNote(
@@ -761,6 +775,9 @@ public enum Teach {
         .init(name: "Weighted basket",
               plain: "Conditions read a weighted average of the members, so one bad name is diluted by the others.",
               desk: "Long correlation relative to worst-of. Diversification cheapens the options, so terms are thinner."),
+        .init(name: "Crash corr",
+              plain: "Correlation that rises when the basket is down — names start moving together in a selloff.",
+              desk: "Here a one-parameter spike, default off, per-step Cholesky. A desk uses a term/spot-dependent corr surface. Two-sided: worst-of vs weighted often move opposite ways. Not a quote."),
         .init(name: "Participation",
               plain: "The share of any gain that you receive at maturity. 150% participation pays one and a half times the rise.",
               desk: "Value is linear in it: upside leg = participation × unit upside U."),

@@ -216,6 +216,15 @@ public struct DeskView: View {
                 }
                 LeverRow(label: "Pairwise correlation ρ",
                          value: $spec.correlation, range: 0.2...0.95, step: 0.05, field: .corr)
+                ChipToggle(label: "Crash corr (selloff spike)", on: spec.crashCorrOn) {
+                    mutate { $0.crashCorrOn.toggle() }
+                }
+                if spec.crashCorrOn {
+                    LeverRow(label: "Extra ρ per 10% basket drop",
+                             value: $spec.crashCorrSlope, range: 0...0.15, step: 0.01, field: .corr)
+                    Text("ρ(z) = ρ + slope × max(1−z, 0) × 10, capped at 0.99. Names couple as the basket trades down (per-step Cholesky). A desk uses a term/spot-dependent corr surface; this is a one-parameter cartoon. Default off. Two-sided: a worst-of KI can cheapen (less dispersion) while a weighted-basket KI gets more left-tail variance.")
+                        .font(.system(size: 10)).foregroundStyle(.secondary)
+                }
             }
             LeverRow(label: "Vol shift (all names)",
                      value: $spec.volShift, range: -0.10...0.15, step: 0.01, field: .volPts)
@@ -816,8 +825,8 @@ public struct DeskView: View {
          "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise."),
         ("One flat volatility per name — unless you turn local vol on",
          "Default: every option on a name is priced at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits — that is the skew charge. The optional local-vol toggle puts a one-parameter leverage function in the paths (σ rises as the name trades down). A desk Dupire surface is calibrated to listed options and is time-dependent; this is a cartoon so a barrier can see a smile instead of only a charge."),
-        ("Correlation is a single number",
-         "One pairwise correlation is applied across the whole basket, and it does not change with the market. In practice correlation rises sharply in sell-offs, which makes worst-of baskets behave worse than modelled precisely when it matters most."),
+        ("Correlation is one number — unless you turn crash corr on",
+         "Default: one pairwise correlation across the whole basket, constant in the market. Realised corr rises in sell-offs. The optional crash-corr toggle raises ρ as the basket trades down (per-step Cholesky). A desk uses a term/spot-dependent corr surface; this is a cartoon so a worst-of or weighted KI can see the spike. Default off."),
         ("The issuer call is a small Longstaff–Schwartz",
          "The issuer redeems when a four-regressor fit (1, z, z², knocked) says continuation is worth more than redemption. A desk LSMC uses more basis functions, more paths, and often a funding-measure regression. Treat the call timing as directional, not a quote."),
         ("Barriers are watched at fixed times",
@@ -1221,6 +1230,9 @@ public struct DeskView: View {
         if spec.averaging != .none { parts.append("\(spec.averaging.fixings)-fixing Asian tail") }
         if spec.localVolOn {
             parts.append("local vol \(String(format: "%.1f", spec.localVolSlope * 100))v/10% down")
+        }
+        if spec.crashCorrOn && spec.members.count > 1 {
+            parts.append("crash corr +\(String(format: "%.2f", spec.crashCorrSlope))/10% down")
         }
         if spec.coupon != .none {
             if spec.snowball {

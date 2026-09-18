@@ -178,6 +178,10 @@ public struct Instrument: Hashable, Sendable, Codable {
     /// Default off so lessons still run on flat vol + a skew charge.
     public var localVolOn: Bool
     public var localVolSlope: Double    // vol pts per 10% below spot; same units as skewSlope
+    /// Teaching crash corr: ρ(z) = ρ + slope × max(1−z, 0) × 10, capped at 0.99.
+    /// Default off so lessons still run on one equicorrelation.
+    public var crashCorrOn: Bool
+    public var crashCorrSlope: Double   // extra ρ per 10% basket drop below spot
     // charges & reserves: bridge model mid to the dealer offer
     public var chargesOn: Bool
     public var skewSlope: Double        // vol pts per 10% moneyness on the downside wing
@@ -207,6 +211,7 @@ public struct Instrument: Hashable, Sendable, Codable {
         ust3m: Double, ust1y: Double, ust2y: Double, ust3y: Double, ust5y: Double, ust7y: Double,
         spreadShort: Double, spreadLong: Double, volShift: Double,
         localVolOn: Bool, localVolSlope: Double,
+        crashCorrOn: Bool, crashCorrSlope: Double,
         chargesOn: Bool, skewSlope: Double, barrierShift: Double,
         corrBA: Double, volBA: Double, reserveBps: Double, ufFee: Double
     ) {
@@ -228,6 +233,7 @@ public struct Instrument: Hashable, Sendable, Codable {
         self.ust3y = ust3y; self.ust5y = ust5y; self.ust7y = ust7y
         self.spreadShort = spreadShort; self.spreadLong = spreadLong; self.volShift = volShift
         self.localVolOn = localVolOn; self.localVolSlope = localVolSlope
+        self.crashCorrOn = crashCorrOn; self.crashCorrSlope = crashCorrSlope
         self.chargesOn = chargesOn; self.skewSlope = skewSlope; self.barrierShift = barrierShift
         self.corrBA = corrBA; self.volBA = volBA; self.reserveBps = reserveBps; self.ufFee = ufFee
     }
@@ -257,6 +263,7 @@ extension Instrument {
         ust3y: 0.0434, ust5y: 0.0441, ust7y: 0.0453,
         spreadShort: 0.004, spreadLong: 0.006, volShift: 0,
         localVolOn: false, localVolSlope: 0.010,
+        crashCorrOn: false, crashCorrSlope: 0.05,
         chargesOn: true, skewSlope: 0.010, barrierShift: 0.01,
         corrBA: 0.03, volBA: 0.005, reserveBps: 10, ufFee: 0.025)
 
@@ -264,6 +271,7 @@ extension Instrument {
     /// keep pricing after its control disappears.
     public mutating func applyBuilderRules() {
         if members.isEmpty { members = ["SPX"] }
+        if members.count < 2 { crashCorrOn = false }
         if coupon == .none { memory = false; snowball = false }
         if call == .none { snowball = false; lockIn = false }
         if snowball { memory = false }
@@ -284,7 +292,7 @@ extension Instrument {
     }
 
     /// Synthesized Codable requires every key. Saved specs from before local vol
-    /// are patched with the off defaults rather than failing to restore.
+    /// / crash corr are patched with the off defaults rather than failing to restore.
     static func decodeInstrument(_ data: Data) -> Instrument? {
         let dec = JSONDecoder()
         if let s = try? dec.decode(Instrument.self, from: data) { return s }
@@ -292,6 +300,8 @@ extension Instrument {
         var patched = false
         if obj["localVolOn"] == nil { obj["localVolOn"] = false; patched = true }
         if obj["localVolSlope"] == nil { obj["localVolSlope"] = 0.01; patched = true }
+        if obj["crashCorrOn"] == nil { obj["crashCorrOn"] = false; patched = true }
+        if obj["crashCorrSlope"] == nil { obj["crashCorrSlope"] = 0.05; patched = true }
         guard patched,
               let d2 = try? JSONSerialization.data(withJSONObject: obj),
               let s = try? dec.decode(Instrument.self, from: d2) else { return nil }

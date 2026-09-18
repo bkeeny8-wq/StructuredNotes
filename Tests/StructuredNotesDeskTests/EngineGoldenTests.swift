@@ -162,6 +162,7 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertEqual(back.upside, .linear)
         XCTAssertEqual(Instrument.fromJSON(s.jsonString() ?? "")?.termYears ?? 0, 3, accuracy: 1e-12)
         XCTAssertEqual(back.localVolOn, false)
+        XCTAssertEqual(back.crashCorrOn, false)
     }
 
     func testDailyKIWithAsianTailKnocksAtLeastAsOftenAsEuropean() {
@@ -463,11 +464,93 @@ final class EngineGoldenTests: XCTestCase {
         }
         obj.removeValue(forKey: "localVolOn")
         obj.removeValue(forKey: "localVolSlope")
+        obj.removeValue(forKey: "crashCorrOn")
+        obj.removeValue(forKey: "crashCorrSlope")
         let raw = String(data: try JSONSerialization.data(withJSONObject: obj), encoding: .utf8) ?? ""
         let back = Instrument.fromJSON(raw)
         XCTAssertNotNil(back)
         XCTAssertEqual(back?.localVolOn, false)
+        XCTAssertEqual(back?.crashCorrOn, false)
         XCTAssertEqual(back?.coupon, .guaranteed)
         XCTAssertEqual(back?.termYears ?? 0, 3, accuracy: 1e-12)
+    }
+
+    func testCrashRhoAtSpotIsBaseAndRisesBelow() {
+        XCTAssertEqual(Engine.crashRho(base: 0.75, basketZ: 1.0, slope: 0.05), 0.75, accuracy: 1e-12)
+        XCTAssertEqual(Engine.crashRho(base: 0.75, basketZ: 1.10, slope: 0.05), 0.75, accuracy: 1e-12)
+        XCTAssertEqual(Engine.crashRho(base: 0.75, basketZ: 0.60, slope: 0.05), 0.95, accuracy: 1e-12)
+        XCTAssertEqual(Engine.crashRho(base: 0.75, basketZ: 0.60, slope: 0), 0.75, accuracy: 1e-12)
+        XCTAssertEqual(Engine.crashRho(base: 0.90, basketZ: 0.50, slope: 0.05), 0.99, accuracy: 1e-12)
+    }
+
+    func testCrashCorrDoesNotMoveGuaranteedBasket() {
+        var s = guaranteedNote()
+        s.members = ["SPX", "NDX"]
+        s.basket = .worstOf
+        s.correlation = 0.50
+        s.chargesOn = false
+        let flat = Engine.price(s, paths: 1)
+        s.crashCorrOn = true
+        s.crashCorrSlope = 0.15
+        let crash = Engine.price(s, paths: 1)
+        XCTAssertEqual(flat.value, crash.value, accuracy: 1e-12)
+    }
+
+    func testCrashCorrIgnoredOnSingleName() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        s.crashCorrOn = true
+        s.crashCorrSlope = 0.15
+        let withFlag = Engine.price(s, paths: Engine.fastPaths)
+        s.crashCorrOn = false
+        let off = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertEqual(withFlag.value, off.value, accuracy: 1e-12)
+    }
+
+    func testCrashCorrZeroSlopeMatchesFlatOnWeightedKI() {
+        var s = Instrument.initial
+        s.members = ["SPX", "NDX"]
+        s.basket = .weighted
+        s.weights = [0.5, 0.5, 1, 1]
+        s.correlation = 0.40
+        s.downside = .kiPut
+        s.protection = 0.70
+        s.chargesOn = false
+        let flat = Engine.price(s, paths: Engine.fastPaths)
+        s.crashCorrOn = true
+        s.crashCorrSlope = 0
+        let crash = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertEqual(flat.value, crash.value, accuracy: 1e-12)
+        XCTAssertEqual(flat.downsideLeg, crash.downsideLeg, accuracy: 1e-12)
+    }
+
+    func testCrashCorrRaisesWeightedBasketKIDownside() {
+        var s = Instrument.initial
+        s.members = ["SPX", "NDX"]
+        s.basket = .weighted
+        s.weights = [0.5, 0.5, 1, 1]
+        s.correlation = 0.40
+        s.downside = .kiPut
+        s.protection = 0.70
+        s.chargesOn = false
+        let flat = Engine.price(s, paths: Engine.fastPaths)
+        s.crashCorrOn = true
+        s.crashCorrSlope = 0.10
+        let crash = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertGreaterThan(crash.downsideLeg, flat.downsideLeg + 0.0005)
+        XCTAssertLessThan(crash.value, flat.value - 0.0005)
+    }
+
+    func testCrashCorrClearsWhenBasketShrinksToOne() {
+        var s = Instrument.initial
+        s.members = ["SPX", "NDX"]
+        s.crashCorrOn = true
+        s.applyBuilderRules()
+        XCTAssertTrue(s.crashCorrOn)
+        s.members = ["SPX"]
+        s.applyBuilderRules()
+        XCTAssertFalse(s.crashCorrOn)
     }
 }

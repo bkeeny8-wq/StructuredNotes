@@ -14,6 +14,8 @@
 //  per name; an optional one-parameter leverage function (σ rises as the
 //  name trades down) puts a smile in the paths so barriers can see it
 //  without going through the skew charge. Not a calibrated Dupire surface.
+//  Optional crash corr (default off) raises equicorrelation as the basket
+//  trades down, via a per-step Cholesky. Not a desk spot/term corr surface.
 
 import Foundation
 import Dispatch
@@ -177,6 +179,27 @@ public enum Engine {
     public static func leverageVol(atm: Double, spot: Double, slope: Double) -> Double {
         let extra = slope * max(1 - spot, 0) * 10
         return max(0.01, min(atm + extra, 1.50))
+    }
+
+    /// Instantaneous equicorrelation for the teaching crash-corr spike.
+    /// ρ(z) = ρ + slope × max(1−z, 0) × 10, clipped to (−0.45, 0.99).
+    /// Spot at or above 1 is the pairwise lever; a desk uses a term/spot
+    /// corr surface. `z` is current basket performance (worst-of or weighted).
+    public static func crashRho(base: Double, basketZ: Double, slope: Double) -> Double {
+        let extra = slope * max(1 - basketZ, 0) * 10
+        return min(0.99, max(-0.45, base + extra))
+    }
+
+    static func weightedBasketVol(_ vols: [Double], nA: Int, weights: [Double], rho: Double) -> Double {
+        var num = 0.0, den = 0.0
+        for i in 0..<nA {
+            let wi = max(weights[i], 1e-6); den += wi
+            for j in 0..<nA {
+                let wj = max(weights[j], 1e-6)
+                num += wi * wj * vols[i] * vols[j] * (i == j ? 1 : rho)
+            }
+        }
+        return num.squareRoot() / max(den, 1e-12)
     }
 
     /// Period variance of a weighted basket from per-name var×dt.
@@ -481,17 +504,11 @@ public enum Engine {
         let localOn = s.localVolOn
         let lvSlope = s.localVolSlope
         let rhoUse = min(0.99, max(-0.45, s.correlation))
+        let crashOn = s.crashCorrOn && nA > 1
+        let crashSlope = s.crashCorrSlope
         var basketVol = 0.0
-        if watchBridge && nA > 1 && s.basket == .weighted && !localOn {
-            var num = 0.0, den = 0.0
-            for i in 0..<nA {
-                let wi = max(s.weights[i], 1e-6); den += wi
-                for j in 0..<nA {
-                    let wj = max(s.weights[j], 1e-6)
-                    num += wi * wj * vols[i] * vols[j] * (i == j ? 1 : rhoUse)
-                }
-            }
-            basketVol = num.squareRoot() / den
+        if watchBridge && nA > 1 && s.basket == .weighted && !localOn && !crashOn {
+            basketVol = weightedBasketVol(vols, nA: nA, weights: s.weights, rho: rhoUse)
         }
 
         let issuerLS = s.call == .issuerCall
@@ -566,6 +583,7 @@ public enum Engine {
                 var varDtNow = [Double](repeating: 0, count: nA)
                 var subVarDt = [Double](repeating: 0, count: 21 * nA)
                 var vdtSubNow = [Double](repeating: 0, count: nA)
+                var subRho = [Double](repeating: rhoUse, count: 21)
                 let lo = paths * chunk / chunkCount
                 let hi = paths * (chunk + 1) / chunkCount
                 for pth in lo..<hi {
@@ -592,10 +610,17 @@ public enum Engine {
                 if isFinal && nSubs > 0 {
                     let fwdSub = fwdDt[i] / Double(nSubs)
                     for sub in 0..<nSubs {
+                        var Lsub = L
+                        var rhoSub = rhoUse
+                        if crashOn {
+                            rhoSub = crashRho(base: rhoUse, basketZ: perf(x, s), slope: crashSlope)
+                            Lsub = cholesky(rho: rhoSub, n: nA)
+                        }
+                        subRho[sub] = rhoSub
                         let slot = base + (nSteps - 1 + sub) * nA
                         for j in 0..<nA {
                             var e = 0.0
-                            for k in 0...j { e += L[j][k] * z[slot + k] }
+                            for k in 0...j { e += Lsub[j][k] * z[slot + k] }
                             if localOn {
                                 let v = leverageVol(atm: vols[j], spot: x[j], slope: lvSlope)
                                 let v2 = v * v
@@ -608,10 +633,16 @@ public enum Engine {
                         }
                     }
                 } else {
+                    var Lstep = L
+                    var rhoStep = rhoUse
+                    if crashOn {
+                        rhoStep = crashRho(base: rhoUse, basketZ: perf(x, s), slope: crashSlope)
+                        Lstep = cholesky(rho: rhoStep, n: nA)
+                    }
                     let slot = base + (i - 1) * nA
                     for j in 0..<nA {
                         var e = 0.0
-                        for k in 0...j { e += L[j][k] * z[slot + k] }
+                        for k in 0...j { e += Lstep[j][k] * z[slot + k] }
                         if localOn {
                             let v = leverageVol(atm: vols[j], spot: x[j], slope: lvSlope)
                             let v2 = v * v
@@ -621,6 +652,8 @@ public enum Engine {
                             x[j] *= exp(fwdDt[i] - qv[j] + volSqdt[j] * e)
                         }
                     }
+                    // Stash this step's ρ on index 0 so the bridge below can read it.
+                    subRho[0] = rhoStep
                 }
 
                 var zNow = perf(x, s)
@@ -639,10 +672,21 @@ public enum Engine {
                                 for j in 0..<nA { vdtSubNow[j] = subVarDt[sub * nA + j] }
                             }
                             let vdtSubUse = localOn ? vdtSubNow : varDtSub
-                            let bvarSub = (localOn && nA > 1 && s.basket == .weighted)
-                                ? basketVarFromVarDt(subVarDt, offset: sub * nA, nA: nA,
-                                                     weights: s.weights, rho: rhoUse)
-                                : basketVol * basketVol * dtSub
+                            let rhoSub = subRho[sub]
+                            let bvarSub: Double = {
+                                guard nA > 1 && s.basket == .weighted else {
+                                    return basketVol * basketVol * dtSub
+                                }
+                                if localOn {
+                                    return basketVarFromVarDt(subVarDt, offset: sub * nA, nA: nA,
+                                                              weights: s.weights, rho: rhoSub)
+                                }
+                                if crashOn {
+                                    let bv = weightedBasketVol(vols, nA: nA, weights: s.weights, rho: rhoSub)
+                                    return bv * bv * dtSub
+                                }
+                                return basketVol * basketVol * dtSub
+                            }()
                             if watchKI && kiBridge && !knocked {
                                 if brownianHit(barrier: s.protection, prevX: prevX, nowX: day,
                                                zPrev: prevZ, zNow: zDay, nA: nA, worstOf: worstOf,
@@ -686,10 +730,21 @@ public enum Engine {
                     if isProtDate && zNow < s.protection { knocked = true }
                     let u0 = base + (i - 1) * nA
                     let vdtUse = localOn ? varDtNow : varDt
-                    let bvarUse = (localOn && nA > 1 && s.basket == .weighted)
-                        ? basketVarFromVarDt(varDtNow, offset: 0, nA: nA,
-                                             weights: s.weights, rho: rhoUse)
-                        : basketVol * basketVol * dt
+                    let rhoBridge = subRho[0]
+                    let bvarUse: Double = {
+                        guard nA > 1 && s.basket == .weighted else {
+                            return basketVol * basketVol * dt
+                        }
+                        if localOn {
+                            return basketVarFromVarDt(varDtNow, offset: 0, nA: nA,
+                                                      weights: s.weights, rho: rhoBridge)
+                        }
+                        if crashOn {
+                            let bv = weightedBasketVol(vols, nA: nA, weights: s.weights, rho: rhoBridge)
+                            return bv * bv * dt
+                        }
+                        return basketVol * basketVol * dt
+                    }()
                     if kiBridge && !knocked {
                         if brownianHit(barrier: s.protection, prevX: xPrev, nowX: x,
                                        zPrev: zPrev, zNow: zNow, nA: nA, worstOf: worstOf,
@@ -1131,7 +1186,7 @@ public enum Engine {
             }
         }
         if s.members.count > 1 {
-            add("+ \(s.basket == .worstOf ? "worst-of" : "weighted") basket ×\(s.members.count) (ρ \(String(format: "%.2f", s.correlation)))") {
+            add("+ \(s.basket == .worstOf ? "worst-of" : "weighted") basket ×\(s.members.count) (ρ \(String(format: "%.2f", s.correlation))\(s.crashCorrOn ? ", crash spike" : ""))") {
                 $0.members = s.members; $0.basket = s.basket; $0.weights = s.weights
             }
         }
