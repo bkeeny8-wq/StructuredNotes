@@ -8,8 +8,9 @@
 //  schedules (calendar month-ends from issue; leftover stub months do not
 //  pay); protection has its own observation with a sticky knock-in; the
 //  final valuation can average daily fixings over the last week or month.
-//  Issuer call is rule-based — investor value shown is an upper bound
-//  (optimal LSMC exercise is worth less to the holder).
+//  Issuer call is a small Longstaff–Schwartz step (basis 1, z, z², knocked):
+//  the bank redeems when fitted continuation exceeds par + premium. Teaching
+//  cartoon of optimal exercise, not a desk LSMC.
 
 import Foundation
 import Dispatch
@@ -179,6 +180,34 @@ public enum Engine {
         return L
     }
 
+    /// 4×4 Gaussian elimination with partial pivot. Used by the issuer-call
+    /// Longstaff–Schwartz ridge fit (basis 1, z, z², knocked).
+    static func ge4(_ A0: [[Double]], _ b0: [Double]) -> [Double] {
+        var A = A0, b = b0
+        for i in 0..<4 {
+            var piv = i, mag = abs(A[i][i])
+            for r in (i + 1)..<4 {
+                let m = abs(A[r][i])
+                if m > mag { mag = m; piv = r }
+            }
+            if mag < 1e-18 { continue }
+            if piv != i { A.swapAt(i, piv); b.swapAt(i, piv) }
+            let d = A[i][i]
+            for r in (i + 1)..<4 {
+                let f = A[r][i] / d
+                for c in i..<4 { A[r][c] -= f * A[i][c] }
+                b[r] -= f * b[i]
+            }
+        }
+        var x = [Double](repeating: 0, count: 4)
+        for i in stride(from: 3, through: 0, by: -1) {
+            var s = b[i]
+            for c in (i + 1)..<4 { s -= A[i][c] * x[c] }
+            x[i] = abs(A[i][i]) > 1e-18 ? s / A[i][i] : 0
+        }
+        return x
+    }
+
     /// Risk-free zero from the instrument's editable pillars (linear, flat ends).
     public static func zeroRF(_ s: Instrument, _ t: Double) -> Double {
         let p: [(Double, Double)] = [(0.25, s.ust3m), (1, s.ust1y), (2, s.ust2y),
@@ -255,6 +284,107 @@ public enum Engine {
         var pv = 0.0, parPV = 0.0, cpnPV = 0.0, premPV = 0.0, upPV = 0.0, lossPV = 0.0
         var q = 0.0, uUnit = 0.0
         var called = 0.0, loss = 0.0, life = 0.0, coupons = 0.0
+    }
+
+    /// Issuer Bermudan: backward Longstaff–Schwartz on tapes from a no-exercise
+    /// forward pass. Holder receives min(continuation, redemption). A desk LSMC
+    /// uses more basis functions, more paths, and often a funding-measure
+    /// regression — this is the teaching-size version of that idea.
+    static func applyIssuerLS(s: Instrument, paths: Int, nSteps: Int, dt: Double,
+                              dfArr: [Double], callStep: [Int], nCall: Int,
+                              z: UnsafePointer<Double>, kn: UnsafePointer<Double>,
+                              pfxCpn: UnsafePointer<Double>, pfxQ: UnsafePointer<Double>,
+                              pfxN: UnsafePointer<Double>,
+                              termCpn: UnsafePointer<Double>, termQ: UnsafePointer<Double>,
+                              termN: UnsafePointer<Double>, termPar: UnsafePointer<Double>,
+                              termUp: UnsafePointer<Double>, termLoss: UnsafePointer<Double>,
+                              termU: UnsafePointer<Double>) -> SimOut {
+        var alive = [Double](repeating: 0, count: paths)
+        var exerciseK = [Int](repeating: nCall, count: paths)
+        for p in 0..<paths {
+            alive[p] = termCpn[p] + termPar[p] + termUp[p] - termLoss[p]
+        }
+        let snowball = s.snowball && s.coupon != .none
+        let pathwise = paths < 40
+        for k in stride(from: nCall - 1, through: 0, by: -1) {
+            let i = callStep[k]
+            let t = Double(i) * dt
+            let df = dfArr[i]
+            let R = 1.0 + s.callPremium * t + (snowball ? s.snowballRate * t : 0)
+            var y = [Double](repeating: 0, count: paths)
+            var A = [[Double]](repeating: [Double](repeating: 0, count: 4), count: 4)
+            var b = [Double](repeating: 0, count: 4)
+            for p in 0..<paths {
+                let kept = pfxCpn[p * nCall + k]
+                let contPV = alive[p] - kept
+                y[p] = df > 1e-16 ? contPV / df : contPV
+                if !pathwise {
+                    let zp = z[p * nCall + k]
+                    let r = [1.0, zp, zp * zp, kn[p * nCall + k]]
+                    let yi = y[p]
+                    for a in 0..<4 {
+                        b[a] += r[a] * yi
+                        for c in 0..<4 { A[a][c] += r[a] * r[c] }
+                    }
+                }
+            }
+            var beta = [1.0, 0.0, 0.0, 0.0]
+            if !pathwise {
+                for a in 0..<4 { A[a][a] += 1e-6 }
+                beta = ge4(A, b)
+            }
+            for p in 0..<paths {
+                let chat: Double
+                if pathwise {
+                    chat = y[p]
+                } else {
+                    let zp = z[p * nCall + k]
+                    let r = [1.0, zp, zp * zp, kn[p * nCall + k]]
+                    chat = beta[0] * r[0] + beta[1] * r[1] + beta[2] * r[2] + beta[3] * r[3]
+                }
+                if chat > R {
+                    exerciseK[p] = k
+                    alive[p] = pfxCpn[p * nCall + k] + R * df
+                }
+            }
+        }
+        var out = SimOut()
+        out.callSteps = [Double](repeating: 0, count: nSteps + 1)
+        let T = Double(nSteps) * dt
+        for p in 0..<paths {
+            if exerciseK[p] < nCall {
+                let k = exerciseK[p]
+                let i = callStep[k]
+                let t = Double(i) * dt
+                let df = dfArr[i]
+                let snow = snowball ? s.snowballRate * t * df : 0
+                out.cpnPV += pfxCpn[p * nCall + k] + snow
+                out.q += pfxQ[p * nCall + k] + (snowball ? t * df : 0)
+                out.coupons += pfxN[p * nCall + k] + (snowball ? 1 : 0)
+                out.parPV += df
+                out.premPV += s.callPremium * t * df
+                out.called += 1
+                out.life += t
+                out.callSteps[i] += 1
+            } else {
+                out.cpnPV += termCpn[p]
+                out.q += termQ[p]
+                out.coupons += termN[p]
+                out.parPV += termPar[p]
+                out.upPV += termUp[p]
+                out.lossPV += termLoss[p]
+                out.uUnit += termU[p]
+                out.life += T
+                if termLoss[p] > 1e-12 { out.loss += 1 }
+            }
+        }
+        let n = Double(paths)
+        out.pv = (out.cpnPV + out.parPV + out.premPV + out.upPV - out.lossPV) / n
+        out.parPV /= n; out.cpnPV /= n; out.premPV /= n; out.upPV /= n; out.lossPV /= n
+        out.q /= n; out.uUnit /= n
+        out.called /= n; out.loss /= n; out.life /= n; out.coupons /= n
+        for i in 0..<out.callSteps.count { out.callSteps[i] /= n }
+        return out
     }
 
     static func simulate(_ s: Instrument,
@@ -334,6 +464,62 @@ public enum Engine {
             basketVol = num.squareRoot() / den
         }
 
+        let issuerLS = s.call == .issuerCall
+        var callStepList: [Int] = []
+        if issuerLS, callMonths > 0 {
+            for i in 1..<nSteps {
+                let t = Double(i) * dt
+                if i % callMonths == 0, t >= s.nonCallYears - 1e-9 {
+                    callStepList.append(i)
+                }
+            }
+        }
+        let nCall = callStepList.count
+        let runLS = issuerLS && nCall > 0
+        let zTape: UnsafeMutablePointer<Double>?
+        let knTape: UnsafeMutablePointer<Double>?
+        let pfxCpnTape: UnsafeMutablePointer<Double>?
+        let pfxQTape: UnsafeMutablePointer<Double>?
+        let pfxNTape: UnsafeMutablePointer<Double>?
+        let termCpnTape: UnsafeMutablePointer<Double>?
+        let termQTape: UnsafeMutablePointer<Double>?
+        let termNTape: UnsafeMutablePointer<Double>?
+        let termParTape: UnsafeMutablePointer<Double>?
+        let termUpTape: UnsafeMutablePointer<Double>?
+        let termLossTape: UnsafeMutablePointer<Double>?
+        let termUTape: UnsafeMutablePointer<Double>?
+        if runLS {
+            let callCap = paths * nCall
+            func zeros(_ n: Int) -> UnsafeMutablePointer<Double> {
+                let p = UnsafeMutablePointer<Double>.allocate(capacity: n)
+                p.initialize(repeating: 0, count: n)
+                return p
+            }
+            zTape = zeros(callCap); knTape = zeros(callCap)
+            pfxCpnTape = zeros(callCap); pfxQTape = zeros(callCap); pfxNTape = zeros(callCap)
+            termCpnTape = zeros(paths); termQTape = zeros(paths); termNTape = zeros(paths)
+            termParTape = zeros(paths); termUpTape = zeros(paths)
+            termLossTape = zeros(paths); termUTape = zeros(paths)
+        } else {
+            zTape = nil; knTape = nil
+            pfxCpnTape = nil; pfxQTape = nil; pfxNTape = nil
+            termCpnTape = nil; termQTape = nil; termNTape = nil
+            termParTape = nil; termUpTape = nil
+            termLossTape = nil; termUTape = nil
+        }
+        defer {
+            func free(_ p: UnsafeMutablePointer<Double>?, _ n: Int) {
+                guard let p, n > 0 else { return }
+                p.deinitialize(count: n)
+                p.deallocate()
+            }
+            free(zTape, paths * nCall); free(knTape, paths * nCall)
+            free(pfxCpnTape, paths * nCall); free(pfxQTape, paths * nCall); free(pfxNTape, paths * nCall)
+            free(termCpnTape, paths); free(termQTape, paths); free(termNTape, paths)
+            free(termParTape, paths); free(termUpTape, paths)
+            free(termLossTape, paths); free(termUTape, paths)
+        }
+
         var out = SimOut()
         out.callSteps = [Double](repeating: 0, count: nSteps + 1)
         let chunkCount = paths >= 512 ? 8 : 1
@@ -361,7 +547,8 @@ public enum Engine {
             var periodClean = true
             var locked = false
             var cpv = 0.0, parpv = 0.0, prempv = 0.0, uppv = 0.0, losspv = 0.0
-            var qacc = 0.0, uacc = 0.0
+            var qacc = 0.0, uacc = 0.0, ncpn = 0.0
+            var callK = 0
             for j in 0..<nA { xPrev[j] = x[j] }
             var zPrev = perf(x, s)
             let base = pth * maxSlotsPerPath * nA
@@ -474,39 +661,54 @@ public enum Engine {
                     let condition = dailyBarrier ? (periodClean && zNow >= s.couponBarrier)
                                                  : (zNow >= s.couponBarrier)
                     if s.coupon == .guaranteed {
-                        cpv += perEventAmt * df; qacc += perEventQ * df; out.coupons += 1
+                        cpv += perEventAmt * df; qacc += perEventQ * df; ncpn += 1
                     } else if condition {
                         let canMemory = s.memory && s.couponObs != .european
                         let n = 1 + (canMemory ? missed : 0)
                         cpv += Double(n) * perEventAmt * df
                         qacc += Double(n) * perEventQ * df
-                        out.coupons += Double(n); missed = 0
+                        ncpn += Double(n); missed = 0
                     } else { missed += 1 }
-                    periodClean = true
+                    // Next period starts dirty if this payment-date close is
+                    // already through the barrier (the close is the start of
+                    // the next watch window under daily monitoring).
+                    periodClean = !dailyBarrier || zNow >= s.couponBarrier
                 }
                 if isFinal, couponActive, s.couponObs == .european, !s.snowball {
                     let pays = s.coupon == .guaranteed || zNow >= s.couponBarrier
-                    if pays { cpv += c * s.termYears * df; qacc += s.termYears * df; out.coupons += 1 }
+                    if pays { cpv += c * s.termYears * df; qacc += s.termYears * df; ncpn += 1 }
                 }
 
                 if !isFinal, callActive, callMonths > 0, i % callMonths == 0, t >= s.nonCallYears - 1e-9 {
-                    let trig = s.callTrigger - s.triggerStep * max(0, t - s.nonCallYears)
-                    if zNow >= trig {
-                        parpv += df
-                        prempv += s.callPremium * t * df
-                        if couponActive && s.snowball {
-                            cpv += s.snowballRate * t * df; qacc += t * df; out.coupons += 1
+                    if runLS {
+                        if callK < nCall {
+                            let o = pth * nCall + callK
+                            zTape![o] = zNow
+                            knTape![o] = knocked ? 1 : 0
+                            pfxCpnTape![o] = cpv
+                            pfxQTape![o] = qacc
+                            pfxNTape![o] = ncpn
+                            callK += 1
                         }
-                        out.called += 1; out.life += t
-                        out.callSteps[i] += 1
-                        break
+                    } else {
+                        let trig = s.callTrigger - s.triggerStep * max(0, t - s.nonCallYears)
+                        if zNow >= trig {
+                            parpv += df
+                            prempv += s.callPremium * t * df
+                            if couponActive && s.snowball {
+                                cpv += s.snowballRate * t * df; qacc += t * df; ncpn += 1
+                            }
+                            out.called += 1; out.life += t
+                            out.callSteps[i] += 1
+                            break
+                        }
                     }
                 }
 
                 if isFinal {
                     if couponActive && s.snowball {
                         let pays = s.coupon == .guaranteed || zNow >= s.couponBarrier
-                        if pays { cpv += s.snowballRate * t * df; qacc += t * df; out.coupons += 1 }
+                        if pays { cpv += s.snowballRate * t * df; qacc += t * df; ncpn += 1 }
                     }
                     if s.downside == .kiPut, knocked, s.secondChance, zNow >= s.secondChanceLevel {
                         knocked = false
@@ -516,19 +718,43 @@ public enum Engine {
                     if (s.upside == .linear || s.upside == .absolute), s.participation > 1e-9 {
                         uacc += up * df / s.participation
                     }
-                    out.life += t
-                    // Principal loss, not knock: a monitored KI that recovers through
-                    // par has knocked = true but loss = 0.
-                    if loss > 1e-12 { out.loss += 1 }
+                    if !runLS {
+                        out.life += t
+                        // Principal loss, not knock: a monitored KI that recovers through
+                        // par has knocked = true but loss = 0.
+                        if loss > 1e-12 { out.loss += 1 }
+                    }
                 }
             }
-            out.cpnPV += cpv; out.parPV += parpv; out.premPV += prempv
-            out.upPV += uppv; out.lossPV += losspv
-            out.q += qacc; out.uUnit += uacc
-            out.pv += cpv + parpv + prempv + uppv - losspv
+            if runLS {
+                termCpnTape![pth] = cpv
+                termQTape![pth] = qacc
+                termNTape![pth] = ncpn
+                termParTape![pth] = parpv
+                termUpTape![pth] = uppv
+                termLossTape![pth] = losspv
+                termUTape![pth] = uacc
+            } else {
+                out.cpnPV += cpv; out.parPV += parpv; out.premPV += prempv
+                out.upPV += uppv; out.lossPV += losspv
+                out.q += qacc; out.uUnit += uacc
+                out.pv += cpv + parpv + prempv + uppv - losspv
+                out.coupons += ncpn
+            }
         }
                 buf[chunk] = out
             }
+        }
+        if runLS,
+           let zTape, let knTape, let pfxCpnTape, let pfxQTape, let pfxNTape,
+           let termCpnTape, let termQTape, let termNTape, let termParTape,
+           let termUpTape, let termLossTape, let termUTape {
+            return applyIssuerLS(s: s, paths: paths, nSteps: nSteps, dt: dt,
+                                 dfArr: dfArr, callStep: callStepList, nCall: nCall,
+                                 z: zTape, kn: knTape, pfxCpn: pfxCpnTape, pfxQ: pfxQTape,
+                                 pfxN: pfxNTape, termCpn: termCpnTape, termQ: termQTape,
+                                 termN: termNTape, termPar: termParTape, termUp: termUpTape,
+                                 termLoss: termLossTape, termU: termUTape)
         }
         for p in partials {
             out.pv += p.pv; out.parPV += p.parPV; out.cpnPV += p.cpnPV
@@ -567,14 +793,18 @@ public enum Engine {
     }
 
     /// Coupon (or snowball rate) that prints the displayed quote at par.
-    /// Mid is linear in the rate via Q, so one shot is exact for the model value.
-    /// When charges are on, the target is a mid of 1 + current charge stack so
-    /// the dealer offer sits at par; charges are refreshed once.
+    /// Mid is linear in the rate via Q when call timing does not depend on the
+    /// coupon (bullet / autocall, charges off): one shot is exact. Issuer LS
+    /// exercise does depend on the coupon, so that case iterates. When charges
+    /// are on, the target is a mid of 1 + current charge stack so the dealer
+    /// offer sits at par; charges are refreshed each round.
     public static func couponForPar(_ s: Instrument, paths: Int = fastPaths) -> Double? {
         guard s.coupon != .none else { return nil }
         var trial = s
         var solved: Double = 0
-        for _ in 0..<2 {
+        let issuer = trial.call == .issuerCall
+        let rounds = (trial.chargesOn || issuer) ? 6 : 1
+        for _ in 0..<rounds {
             let r = price(trial, paths: paths)
             guard r.qFactor > 1e-8 else { return nil }
             let cur = trial.snowball ? trial.snowballRate : trial.couponRate
@@ -589,7 +819,6 @@ public enum Engine {
             guard solved.isFinite else { return nil }
             solved = min(max(solved, 0), 0.25)
             if trial.snowball { trial.snowballRate = solved } else { trial.couponRate = solved }
-            if !trial.chargesOn { break }
         }
         return solved
     }
@@ -730,24 +959,40 @@ public enum Engine {
             var s2 = s
             s2.termYears = max(1.0 / 12.0, s.termYears - tFirst)
             s2.nonCallMonths = 0
-            let trigger = s.callTrigger
             let calledValue = 1.0
                 + s.callPremium * tFirst
                 + ((s.coupon != .none && s.snowball) ? s.snowballRate * tFirst : 0)
-            func valueAt(_ lvl: Double) -> Double {
-                if lvl >= trigger - 1e-12 { return calledValue }
-                return simulate(s2, spotScale: lvl, paths: fastPaths).pv
+            if s.call == .issuerCall {
+                func valueAt(_ lvl: Double) -> Double {
+                    let cont = simulate(s2, spotScale: lvl, paths: fastPaths).pv
+                    return min(cont, calledValue)
+                }
+                let rows = [0.96, 0.985, 1.0, 1.015, 1.04].map { lvl -> ScenarioRow in
+                    let mk = valueAt(lvl)
+                    let up = valueAt(lvl * 1.01)
+                    return ScenarioRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
+                }
+                out.append(EventBlock(
+                    title: "At the first call observation · issuer exercise vs redemption",
+                    rows: rows,
+                    caption: "On this date the issuer compares continuation of the remaining life to redemption (par plus any call premium). The model calls when a small LS fit says continuation is richer — min(C, R), not a 100% trigger. Four regressors, same paths as the mark; not a desk LSMC."))
+            } else {
+                let trigger = s.callTrigger
+                func valueAt(_ lvl: Double) -> Double {
+                    if lvl >= trigger - 1e-12 { return calledValue }
+                    return simulate(s2, spotScale: lvl, paths: fastPaths).pv
+                }
+                let rows = [trigger - 0.04, trigger - 0.015, trigger,
+                            trigger + 0.015, trigger + 0.04].map { lvl -> ScenarioRow in
+                    let mk = valueAt(lvl)
+                    let up = valueAt(lvl * 1.01)
+                    return ScenarioRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
+                }
+                out.append(EventBlock(
+                    title: "At the first call observation · spot around the \(Int(s.callTrigger * 100))% trigger",
+                    rows: rows,
+                    caption: "This is the observation date itself: at or above the trigger the note is already par (plus any call premium). Below it, the remaining life continues. Delta flips through the trigger."))
             }
-            let rows = [trigger - 0.04, trigger - 0.015, trigger,
-                        trigger + 0.015, trigger + 0.04].map { lvl -> ScenarioRow in
-                let mk = valueAt(lvl)
-                let up = valueAt(lvl * 1.01)
-                return ScenarioRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
-            }
-            out.append(EventBlock(
-                title: "At the first call observation · spot around the \(Int(s.callTrigger * 100))% trigger",
-                rows: rows,
-                caption: "This is the observation date itself: at or above the trigger the note is already par (plus any call premium). Below it, the remaining life continues. Delta flips through the trigger."))
         }
         if s.downside == .kiPut {
             var s3 = s
@@ -862,7 +1107,7 @@ public enum Engine {
             add("+ memory") { $0.memory = true }
         }
         if s.call != .none {
-            add("+ \(s.call == .autocall ? "autocall" : "issuer call (bound)")") {
+            add("+ \(s.call == .autocall ? "autocall" : "issuer call (LS)")") {
                 $0.call = s.call; $0.callObs = s.callObs
                 $0.callTrigger = s.callTrigger; $0.nonCallMonths = s.nonCallMonths
             }

@@ -95,7 +95,7 @@ public struct DeskView: View {
         FlexibleWrap(spacing: 6) {
             Button {
                 pinnedJSON = spec.jsonString() ?? ""
-                pinnedMarkRaw = result.map { String($0.value) } ?? ""
+                pinnedMarkRaw = result.map { String(format: "%.12f", $0.value) } ?? ""
             } label: {
                 Label(pinnedJSON.isEmpty ? "Pin build" : "Re-pin", systemImage: "pin")
                     .font(.system(size: 12, weight: .semibold))
@@ -297,7 +297,9 @@ public struct DeskView: View {
                                 }
                                 solverNote = snapshot.chargesOn
                                     ? "Set so the dealer offer prints at par (charges held at the current stack, then refreshed)."
-                                    : "Set so the model mid prints at par — exact via Q on this schedule."
+                                    : (snapshot.call == .issuerCall
+                                       ? "Set so the model mid prints at par. Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
+                                       : "Set so the model mid prints at par — exact via Q on this schedule.")
                             } else {
                                 solverNote = "No coupon dates survive on this build, so there is no rate that prints par."
                             }
@@ -309,7 +311,9 @@ public struct DeskView: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .buttonStyle(.bordered).tint(Theme.bond)
-                Text(solverNote ?? "Solves the coupon so the dealer offer prints at par (model mid, if charges are off). Linear in Q on the live calendar, so the mid identity is exact.")
+                Text(solverNote ?? (spec.call == .issuerCall
+                    ? "Solves the coupon so the quote prints at par. Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
+                    : "Solves the coupon so the dealer offer prints at par (model mid, if charges are off). Linear in Q on the live calendar, so the mid identity is exact."))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
@@ -386,7 +390,7 @@ public struct DeskView: View {
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 if spec.call == .issuerCall {
-                    Text("Issuer may call at any observation after the non-call period. Priced as call at ≥ 100%, no adjustment — holder value is an upper bound (LSMC solves lower for the holder).")
+                    Text("Issuer may call at any observation after the non-call period. Exercise is a small Longstaff–Schwartz step: the bank redeems when fitted continuation exceeds par plus any call premium (basis 1, z, z², knocked). Directionally right — rich coupons get called, cheap zeros are left outstanding — not a desk LSMC.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
@@ -798,8 +802,8 @@ public struct DeskView: View {
          "The model prices every option on a name at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits. That is why the mid is not the offer: the skew charge in the charge stack is the correction, and on income notes it is usually the largest single line."),
         ("Correlation is a single number",
          "One pairwise correlation is applied across the whole basket, and it does not change with the market. In practice correlation rises sharply in sell-offs, which makes worst-of baskets behave worse than modelled precisely when it matters most."),
-        ("The issuer call is rule-based",
-         "An issuer call is priced as though the bank calls whenever the level is at or above 100%. A bank exercising optimally would do better for itself and worse for the holder, so a value shown for an issuer-callable note is an upper bound rather than a quote."),
+        ("The issuer call is a small Longstaff–Schwartz",
+         "The issuer redeems when a four-regressor fit (1, z, z², knocked) says continuation is worth more than redemption. A desk LSMC uses more basis functions, more paths, and often a funding-measure regression. Treat the call timing as directional, not a quote."),
         ("Barriers are watched at fixed times",
          "Monitored barriers are checked on their observation schedule. The daily setting adds a Brownian-bridge correction for touches between closes, which is close to continuous monitoring but not identical to it."),
         ("Prices come from a stored snapshot",
@@ -817,7 +821,7 @@ public struct DeskView: View {
                 let life = "\(Fmt.pct(r.probCalled, 0)) of paths, ~\(String(format: "%.1f", r.expectedLife))y average life"
                 if spec.call == .issuerCall {
                     bulletRow(color: Theme.opt, head: "It ends early",
-                              body: "if the issuer chooses to, on a \(spec.callObs.rawValue.lowercased()) check after \(String(format: "%.0f", spec.nonCallMonths))m. The contract is at the issuer's discretion; the model prices the friendliest rule for you — call whenever the underlier is at or above 100% — so \(life) is an upper bound on what you keep, not the term sheet.")
+                              body: "if the issuer chooses to, on a \(spec.callObs.rawValue.lowercased()) check after \(String(format: "%.0f", spec.nonCallMonths))m. The contract is at the issuer's discretion. The model lets the issuer call when a small LS fit says continuation is worth more than redemption — so \(life) is a teaching estimate of exercise, not the term sheet and not a desk LSMC.")
                 } else {
                     bulletRow(color: Theme.opt, head: "It ends early",
                               body: "if the \(spec.members.count > 1 ? "basket condition holds" : "underlier is at or above \(Fmt.pct(spec.callTrigger, 0))") on a \(spec.callObs.rawValue.lowercased()) check after \(String(format: "%.0f", spec.nonCallMonths))m — \(life).")
@@ -1219,7 +1223,7 @@ public struct DeskView: View {
                 call = "autocall \(Fmt.pct(spec.callTrigger, 0)) (\(spec.callObs.rawValue.lowercased()))"
                 if spec.triggerStep > 0 { call += " −\(Int(spec.triggerStep * 100))%/yr" }
             } else {
-                call = "issuer call at discretion (\(spec.callObs.rawValue.lowercased()); priced as if ≥100%)"
+                call = "issuer call at discretion (\(spec.callObs.rawValue.lowercased()); LS vs redemption)"
             }
             if spec.callPremium > 0 { call += " + \(Fmt.pct(spec.callPremium)) premium" }
             call += " after \(String(format: "%.0f", spec.nonCallMonths))m"
@@ -1710,8 +1714,12 @@ public struct DeskView: View {
             out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", monthly closes + Brownian-bridge hits" : "") — pin risk every observation date.")
         }
         if spec.call != .none {
-            let prem = spec.callPremium > 0 ? " The \(Fmt.pct(spec.callPremium))/yr call premium enlarges the trigger digital." : ""
-            out.append("Negative gamma under the \(Fmt.pct(spec.callTrigger, 0)) \(spec.call == .autocall ? "autocall" : "issuer-call") trigger into \(spec.callObs.rawValue.lowercased()) observations — a print through it extinguishes the coupon-rich states.\(prem)")
+            let prem = spec.callPremium > 0 ? " The \(Fmt.pct(spec.callPremium))/yr call premium raises the redemption the issuer compares to continuation." : ""
+            if spec.call == .autocall {
+                out.append("Negative gamma under the \(Fmt.pct(spec.callTrigger, 0)) autocall trigger into \(spec.callObs.rawValue.lowercased()) observations — a print through it extinguishes the coupon-rich states.\(prem)")
+            } else {
+                out.append("Short the issuer's call on the remaining note into \(spec.callObs.rawValue.lowercased()) observations — LS exercise when continuation exceeds redemption, which usually clips the coupon-rich states.\(prem)")
+            }
         }
         if spec.members.count > 1 && spec.basket == .worstOf {
             out.append("Short correlation ×\(spec.members.count) — the chronic worst-of issuance position. The +0.05ρ number in the risk block sizes it.")

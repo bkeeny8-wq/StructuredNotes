@@ -282,4 +282,106 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertLessThan(Market.asset("XLP").vol, 0.20)
         XCTAssertNotEqual(Market.asset("XLF").name, "XLF")
     }
+
+    func testFromJSONEmptyAndGarbageAreNil() {
+        XCTAssertNil(Instrument.fromJSON(""))
+        XCTAssertNil(Instrument.fromJSON("   "))
+        XCTAssertNil(Instrument.fromJSON("{not json}"))
+        XCTAssertEqual(BarrierObsStyle.dailyMonitored.rawValue, "Any monthly close")
+        XCTAssertEqual(BarrierObsStyle.dailyMonitored.deskLabel, "Monthly closes + bridge")
+    }
+
+    func testRichIssuerCallRedeemsAtFirstDateNotAutocallTrigger() {
+        var s = guaranteedNote(rate: 0.105)
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.callTrigger = 2.0          // unreachable autocall; issuer LS must ignore it
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        let r = Engine.price(s, paths: 1)
+        XCTAssertEqual(r.probCalled, 1, accuracy: 1e-12)
+        XCTAssertEqual(r.expectedLife, 0.5, accuracy: 1e-12)
+        let cpn = 0.105 / 4.0
+        let expected = cpn * fundingDF(s, 0.25) + cpn * fundingDF(s, 0.5) + fundingDF(s, 0.5)
+        XCTAssertEqual(r.value, expected, accuracy: 1e-10)
+        XCTAssertEqual(r.parLeg, fundingDF(s, 0.5), accuracy: 1e-10)
+        XCTAssertEqual(r.couponLeg, 0.105 * r.qFactor, accuracy: 1e-12)
+        var bullet = s
+        bullet.call = .none
+        let never = Engine.price(bullet, paths: 1)
+        XCTAssertGreaterThan(never.value, r.value + 0.05)
+    }
+
+    func testCheapIssuerCallNeverRedeemsWhileAutocallMight() {
+        var s = Instrument.initial
+        s.coupon = .none
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.callTrigger = 1.0
+        s.nonCallMonths = 0
+        s.chargesOn = false
+        let issuer = Engine.price(s, paths: 1)
+        XCTAssertEqual(issuer.probCalled, 0, accuracy: 1e-12)
+        XCTAssertEqual(issuer.value, fundingDF(s, s.termYears), accuracy: 1e-10)
+        var ac = s
+        ac.call = .autocall
+        ac.callTrigger = 1.0
+        let auto = Engine.price(ac, paths: Engine.fastPaths)
+        XCTAssertGreaterThan(auto.probCalled, 0.05)
+        XCTAssertGreaterThan(auto.value, issuer.value + 0.005)
+    }
+
+    func testIssuerCallCheaperThanAutocallOnRichCoupon() {
+        var s = guaranteedNote(rate: 0.105)
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        let issuer = Engine.price(s, paths: 1)
+        var ac = s
+        ac.call = .autocall
+        ac.callTrigger = 1.0
+        let auto = Engine.price(ac, paths: Engine.fastPaths)
+        XCTAssertGreaterThan(auto.value, issuer.value + 0.01)
+        XCTAssertGreaterThan(auto.expectedLife, issuer.expectedLife + 0.2)
+    }
+
+    func testIssuerEventIsMinContinuationNotForcedPar() {
+        var cheap = Instrument.initial
+        cheap.call = .issuerCall
+        cheap.callObs = .quarterly
+        cheap.nonCallMonths = 0
+        cheap.chargesOn = false
+        let cheapEv = Engine.eventScenarios(cheap).first { $0.title.contains("issuer") }
+        XCTAssertNotNil(cheapEv)
+        let cheapAbove = cheapEv?.rows.first { abs($0.spot - 1.04) < 1e-9 }
+        XCTAssertNotEqual(cheapAbove?.mark ?? 1.0, 1.0, accuracy: 1e-3)
+
+        var rich = guaranteedNote(rate: 0.105)
+        rich.call = .issuerCall
+        rich.callObs = .quarterly
+        rich.nonCallMonths = 6
+        rich.chargesOn = false
+        let richEv = Engine.eventScenarios(rich).first { $0.title.contains("issuer") }
+        XCTAssertNotNil(richEv)
+        for row in richEv?.rows ?? [] {
+            XCTAssertEqual(row.mark, 1.0, accuracy: 1e-3)
+        }
+    }
+
+    func testCouponForParWithIssuerCallPrintsPar() {
+        var s = guaranteedNote(rate: 0.105)
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        guard let c = Engine.couponForPar(s, paths: 1) else {
+            return XCTFail("solver returned nil")
+        }
+        s.couponRate = c
+        let r = Engine.price(s, paths: 1)
+        XCTAssertEqual(r.value, 1.0, accuracy: 1e-6)
+        XCTAssertGreaterThan(c, 0.02)
+        XCTAssertLessThan(c, 0.12)
+    }
 }

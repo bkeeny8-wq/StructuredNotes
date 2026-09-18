@@ -89,7 +89,7 @@ public enum Teach {
             return BlockHelp(
                 what: "Early redemption. An autocall triggers automatically when the underlying is at or above the trigger on an observation date. An issuer call is the bank's choice. Both stop the note and return par.",
                 moves: "Adding a call lowers value at the same coupon, because the note is taken away in exactly the healthy scenarios where you were happy to keep collecting. That is why callable notes quote higher coupons than bullets.",
-                watch: "Turn the autocall on and watch value fall, then raise the trigger and watch it recover — a harder trigger means the note survives longer. The called-by distribution on the Note tab shows where the early exits cluster.")
+                watch: "Turn the autocall on and watch value fall, then raise the trigger and watch it recover — a harder trigger means the note survives longer. Switch Autocall to Issuer call: the bank now exercises when a small LS fit says the remaining note is worth more than par, not when the underlier prints 100%. The called-by distribution on the Note tab shows where the early exits cluster.")
         case "upside":
             return BlockHelp(
                 what: "What you receive at maturity if the market is up. Linear participation pays a share of the gain. A digital pays a fixed amount if the final level clears its strike. Absolute pays gains in both directions.",
@@ -134,7 +134,7 @@ public enum Teach {
                 watch: "Read these as pricing weights, not as a forecast. They come from a risk-neutral simulation, which deliberately assumes every asset drifts at the funding rate rather than at whatever you believe equities will return. That assumption is what makes the price arbitrage-free, and it is why these numbers are the right input for valuation and the wrong input for a client's expected return.")
         case "advisor":
             return BlockHelp(
-                what: "The same structure written the way you would say it out loud to a client: what they earn, how it can end early, and what they are risking. An issuer call is described as the bank's discretion; the 100% rule is the pricing assumption, not the contract.",
+                what: "The same structure written the way you would say it out loud to a client: what they earn, how it can end early, and what they are risking. An issuer call is described as the bank's discretion; the LS exercise is the pricing assumption, not the contract.",
                 moves: "",
                 watch: "Every sentence here is generated from the live build, so it can never drift from the actual terms. If a sentence surprises you, the build is not what you thought it was.")
         case "risk":
@@ -146,7 +146,7 @@ public enum Teach {
             return BlockHelp(
                 what: "The clock rolled forward to the note's dangerous moments — the first call observation, and the final month before maturity — with the terms unchanged.",
                 moves: "",
-                watch: "Look for the sign flip through the call trigger and the near-vertical stretch just above the barrier. Those are the two places where hedging a note is genuinely hard, and they are invisible in today's numbers.")
+                watch: "Look for the sign flip through an autocall trigger, and the near-vertical stretch just above a KI barrier. On an issuer call the chart is min(continuation, redemption), not a 100% cliff. Those are the places where hedging a note is genuinely hard, and they are invisible in today's numbers.")
         case "ladder":
             return BlockHelp(
                 what: "Value and sensitivity across a range of market levels, drawn rather than tabulated.",
@@ -301,7 +301,7 @@ public enum Teach {
                                   why: "The note now redeems early whenever the underlying is at or above the trigger on an observation date. Notice which scenarios that removes: the healthy ones, where you were happily collecting coupons. You keep the bad paths and lose the good ones, which is why value falls and why callables quote higher coupons than bullets.")
             case .issuerCall:
                 return ChangeNote(label: "Issuer call on",
-                                  why: "The bank decides when to call. This is priced with a fixed rule — call whenever the level is at or above 100% — which is the friendliest possible assumption for the holder. Real optimal exercise is worse for you, so read the value here as an upper bound rather than a quote.")
+                                  why: "The bank decides when to call. Exercise is a small Longstaff–Schwartz regression on (1, z, z², knocked) — the issuer redeems when fitted continuation exceeds par plus any call premium. That is the right economics and a cartoon of a desk LSMC, not a production exercise boundary.")
             }
         }
         if a.callObs != b.callObs {
@@ -712,7 +712,7 @@ public enum Teach {
               desk: "You are short the good scenarios. Negative gamma sits just under the trigger into each observation."),
         .init(name: "Issuer call",
               plain: "The bank chooses whether to redeem early. You do not.",
-              desk: "Priced here with a fixed rule, which flatters the holder. Optimal exercise is worth less to you, so treat the value as an upper bound."),
+              desk: "Small Longstaff–Schwartz on (1, z, z², knocked). Issuer calls when fitted continuation exceeds redemption. A cartoon of optimal exercise — a desk uses more regressors, more paths, and a carefully chosen measure."),
         .init(name: "Step-down trigger",
               plain: "An autocall level that falls as the note ages, making early redemption progressively easier.",
               desk: "Truncates the tail and the coupon stream at once. Genuinely two-sided in value."),

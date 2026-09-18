@@ -270,7 +270,8 @@ extension Instrument {
     }
 
     public static func fromJSON(_ raw: String) -> Instrument? {
-        guard let data = raw.data(using: .utf8),
+        guard !raw.isEmpty,
+              let data = raw.data(using: .utf8),
               var s = try? JSONDecoder().decode(Instrument.self, from: data) else { return nil }
         s.applyBuilderRules()
         return s
