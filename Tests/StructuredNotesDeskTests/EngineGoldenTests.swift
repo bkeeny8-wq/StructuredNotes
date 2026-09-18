@@ -163,6 +163,8 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertEqual(Instrument.fromJSON(s.jsonString() ?? "")?.termYears ?? 0, 3, accuracy: 1e-12)
         XCTAssertEqual(back.localVolOn, false)
         XCTAssertEqual(back.crashCorrOn, false)
+        XCTAssertTrue(back.markVol.isEmpty)
+        XCTAssertTrue(back.markSpot.isEmpty)
     }
 
     func testDailyKIWithAsianTailKnocksAtLeastAsOftenAsEuropean() {
@@ -466,11 +468,15 @@ final class EngineGoldenTests: XCTestCase {
         obj.removeValue(forKey: "localVolSlope")
         obj.removeValue(forKey: "crashCorrOn")
         obj.removeValue(forKey: "crashCorrSlope")
+        obj.removeValue(forKey: "markVol")
+        obj.removeValue(forKey: "markSpot")
         let raw = String(data: try JSONSerialization.data(withJSONObject: obj), encoding: .utf8) ?? ""
         let back = Instrument.fromJSON(raw)
         XCTAssertNotNil(back)
         XCTAssertEqual(back?.localVolOn, false)
         XCTAssertEqual(back?.crashCorrOn, false)
+        XCTAssertTrue(back?.markVol.isEmpty ?? false)
+        XCTAssertTrue(back?.markSpot.isEmpty ?? false)
         XCTAssertEqual(back?.coupon, .guaranteed)
         XCTAssertEqual(back?.termYears ?? 0, 3, accuracy: 1e-12)
     }
@@ -552,5 +558,164 @@ final class EngineGoldenTests: XCTestCase {
         s.members = ["SPX"]
         s.applyBuilderRules()
         XCTAssertFalse(s.crashCorrOn)
+    }
+
+    func testCurriculumHasFourteenLessonsAndKeepsTheFirstEleven() {
+        XCTAssertEqual(Teach.lessons.count, 14)
+        XCTAssertEqual(Teach.lessons.map(\.number), Array(1...14))
+        XCTAssertEqual(Teach.lessons[0].title, "What a note is before any features")
+        XCTAssertEqual(Teach.lessons[10].title, "Where the risk actually sits")
+        XCTAssertEqual(Teach.lessons[11].title, "Issuer call is not autocall at 100%")
+        XCTAssertEqual(Teach.lessons[12].title, "A smile in the paths, not only a charge")
+        XCTAssertEqual(Teach.lessons[13].title, "Crash corr is two-sided: worst-of vs weighted")
+        for lesson in Teach.lessons where lesson.number <= 11 {
+            XCTAssertFalse(lesson.spec.localVolOn, "lesson \(lesson.number) should stay on flat vol")
+            XCTAssertFalse(lesson.spec.crashCorrOn, "lesson \(lesson.number) should stay on one ρ")
+            XCTAssertTrue(lesson.spec.markVol.isEmpty)
+            XCTAssertTrue(lesson.spec.markSpot.isEmpty)
+        }
+        XCTAssertEqual(Teach.lessons[11].spec.call, .issuerCall)
+        XCTAssertFalse(Teach.lessons[12].spec.localVolOn)
+        XCTAssertTrue(Teach.lessons[12].spec.chargesOn)
+        XCTAssertFalse(Teach.lessons[13].spec.crashCorrOn)
+        XCTAssertEqual(Teach.lessons[13].spec.basket, .worstOf)
+    }
+
+    func testEmptyMarkVolMatchesCatalogATM() {
+        var s = Instrument.initial
+        s.members = ["NVDA"]
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        XCTAssertTrue(s.markVol.isEmpty)
+        XCTAssertEqual(s.atmVol(for: "NVDA"), Market.asset("NVDA").vol, accuracy: 1e-12)
+        let catalog = Engine.price(s, paths: Engine.fastPaths)
+        s.markVol["NVDA"] = Market.asset("NVDA").vol
+        let typedSame = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertEqual(catalog.value, typedSame.value, accuracy: 1e-12)
+        XCTAssertEqual(catalog.downsideLeg, typedSame.downsideLeg, accuracy: 1e-12)
+    }
+
+    func testVolShiftStacksOnMarkVol() {
+        var a = Instrument.initial
+        a.members = ["NVDA"]
+        a.downside = .kiPut
+        a.protection = 0.60
+        a.chargesOn = false
+        a.markVol["NVDA"] = 0.50
+        a.volShift = 0.05
+        var b = a
+        b.markVol["NVDA"] = 0.55
+        b.volShift = 0
+        let pa = Engine.price(a, paths: Engine.fastPaths)
+        let pb = Engine.price(b, paths: Engine.fastPaths)
+        XCTAssertEqual(pa.value, pb.value, accuracy: 1e-12)
+        XCTAssertEqual(pa.downsideLeg, pb.downsideLeg, accuracy: 1e-12)
+    }
+
+    func testMarkVolOverrideRaisesKIDownside() {
+        var s = Instrument.initial
+        s.members = ["NVDA"]
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        let base = Engine.price(s, paths: Engine.fastPaths)
+        s.markVol["NVDA"] = 0.70
+        let fat = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertGreaterThan(fat.downsideLeg, base.downsideLeg + 0.002)
+        XCTAssertLessThan(fat.value, base.value - 0.002)
+    }
+
+    func testMarkSpotDoesNotChangePrice() {
+        var s = Instrument.initial
+        s.members = ["SPX"]
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        let base = Engine.price(s, paths: 200)
+        s.markSpot["SPX"] = 12_000
+        let moved = Engine.price(s, paths: 200)
+        XCTAssertEqual(base.value, moved.value, accuracy: 1e-12)
+        XCTAssertEqual(s.displaySpot(for: "SPX"), 12_000, accuracy: 1e-12)
+    }
+
+    func testApplyBuilderRulesPrunesStaleMarks() {
+        var s = Instrument.initial
+        s.members = ["NVDA", "MSFT"]
+        s.markVol = ["NVDA": 0.50, "MSFT": 0.30, "TSLA": 0.80]
+        s.markSpot = ["NVDA": 200, "TSLA": 400]
+        s.applyBuilderRules()
+        XCTAssertEqual(s.markVol["NVDA"] ?? 0, 0.50, accuracy: 1e-12)
+        XCTAssertEqual(s.markVol["MSFT"] ?? 0, 0.30, accuracy: 1e-12)
+        XCTAssertNil(s.markVol["TSLA"])
+        XCTAssertNil(s.markSpot["TSLA"])
+        XCTAssertEqual(s.markSpot["NVDA"] ?? 0, 200, accuracy: 1e-12)
+        s.members = ["SPX"]
+        s.applyBuilderRules()
+        XCTAssertTrue(s.markVol.isEmpty)
+        XCTAssertTrue(s.markSpot.isEmpty)
+    }
+
+    func testMarkVolRoundTripsInJSON() throws {
+        var s = Instrument.initial
+        s.members = ["NVDA"]
+        s.markVol = ["NVDA": 0.55]
+        s.markSpot = ["NVDA": 210]
+        let raw = s.jsonString() ?? ""
+        let back = Instrument.fromJSON(raw)
+        XCTAssertEqual(back?.markVol["NVDA"] ?? 0, 0.55, accuracy: 1e-12)
+        XCTAssertEqual(back?.markSpot["NVDA"] ?? 0, 210, accuracy: 1e-12)
+        XCTAssertEqual(back?.atmVol(for: "NVDA") ?? 0, 0.55, accuracy: 1e-12)
+    }
+
+    func testCrashCorrWorstOfAndWeightedMoveOppositeOnKI() {
+        var wo = Instrument.initial
+        wo.members = ["SPX", "NDX", "RTY"]
+        wo.basket = .worstOf
+        wo.correlation = 0.40
+        wo.downside = .kiPut
+        wo.protection = 0.70
+        wo.chargesOn = false
+        let woFlat = Engine.price(wo, paths: Engine.fastPaths)
+        wo.crashCorrOn = true
+        wo.crashCorrSlope = 0.10
+        let woCrash = Engine.price(wo, paths: Engine.fastPaths)
+
+        var wt = wo
+        wt.crashCorrOn = false
+        wt.basket = .weighted
+        wt.weights = [1.0 / 3, 1.0 / 3, 1.0 / 3, 1]
+        let wtFlat = Engine.price(wt, paths: Engine.fastPaths)
+        wt.crashCorrOn = true
+        wt.crashCorrSlope = 0.10
+        let wtCrash = Engine.price(wt, paths: Engine.fastPaths)
+
+        // Weighted KI: spike fattens left-tail variance → more expensive put.
+        XCTAssertGreaterThan(wtCrash.downsideLeg, wtFlat.downsideLeg + 0.0005)
+        // Two-sided vs worst-of: holder is long corr, so the same spike cannot
+        // fatten the WO put the way it fattens the weighted one.
+        XCTAssertLessThan(woCrash.downsideLeg - woFlat.downsideLeg,
+                          wtCrash.downsideLeg - wtFlat.downsideLeg - 0.001)
+    }
+
+    func testCrashCorrWithLocalVolStillRaisesWeightedKI() {
+        var s = Instrument.initial
+        s.members = ["SPX", "NDX"]
+        s.basket = .weighted
+        s.weights = [0.5, 0.5, 1, 1]
+        s.correlation = 0.40
+        s.downside = .kiPut
+        s.protection = 0.70
+        s.chargesOn = false
+        s.localVolOn = true
+        s.localVolSlope = 0.010
+        let loc = Engine.price(s, paths: Engine.fastPaths)
+        s.crashCorrOn = true
+        s.crashCorrSlope = 0.10
+        let both = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertTrue(both.value.isFinite)
+        XCTAssertTrue(both.downsideLeg.isFinite)
+        XCTAssertGreaterThan(both.downsideLeg, loc.downsideLeg + 0.0003)
+        XCTAssertLessThan(both.value, loc.value - 0.0003)
     }
 }

@@ -2,10 +2,12 @@
 //  Structured Notes
 //
 //  Data-driven catalog: the tape's top 50 index/ETF underliers and top 100
-//  single stocks by 1H 2026 issuance count. Sourced entries carry real quotes
-//  (indices ~Jul 20, stocks/ETFs Jul 21 2026 closes); the rest carry flagged
-//  assumption-tier vol/div until a live feed is wired. Pricing uses vol, div
-//  and correlation only — paths run in ratios, so spot is display-only.
+//  single stocks by 1H 2026 issuance count. Sourced entries carry a compiled
+//  Jul 2026 seed (indices ~Jul 20, stocks/ETFs Jul 21 closes); the rest carry
+//  flagged assumption-tier vol/div. ATM vol and spot are editable on the
+//  Underlying card and persist with the spec — *your* snapshot, not a live
+//  implied. Pricing uses vol, div and correlation; paths run in ratios, so
+//  spot is display-only.
 
 import Foundation
 

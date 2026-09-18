@@ -174,6 +174,12 @@ public struct Instrument: Hashable, Sendable, Codable {
     public var spreadShort: Double      // funding spread over UST at 1y
     public var spreadLong: Double       // funding spread over UST at 7y (interpolated between)
     public var volShift: Double
+    /// Per-ticker ATM vol override. Empty → catalog. Typed on Underlying and
+    /// persisted with the spec. *Your* snapshot, not a live implied.
+    public var markVol: [String: Double]
+    /// Per-ticker spot override for display. Paths run in return space, so
+    /// this does not change the mark. Empty → catalog.
+    public var markSpot: [String: Double]
     /// Teaching local-vol: σ(x) = σ_ATM + slope × max(1−x, 0) × 10.
     /// Default off so lessons still run on flat vol + a skew charge.
     public var localVolOn: Bool
@@ -210,6 +216,7 @@ public struct Instrument: Hashable, Sendable, Codable {
         protObs: ProtectionObs,
         ust3m: Double, ust1y: Double, ust2y: Double, ust3y: Double, ust5y: Double, ust7y: Double,
         spreadShort: Double, spreadLong: Double, volShift: Double,
+        markVol: [String: Double] = [:], markSpot: [String: Double] = [:],
         localVolOn: Bool, localVolSlope: Double,
         crashCorrOn: Bool, crashCorrSlope: Double,
         chargesOn: Bool, skewSlope: Double, barrierShift: Double,
@@ -232,6 +239,7 @@ public struct Instrument: Hashable, Sendable, Codable {
         self.ust3m = ust3m; self.ust1y = ust1y; self.ust2y = ust2y
         self.ust3y = ust3y; self.ust5y = ust5y; self.ust7y = ust7y
         self.spreadShort = spreadShort; self.spreadLong = spreadLong; self.volShift = volShift
+        self.markVol = markVol; self.markSpot = markSpot
         self.localVolOn = localVolOn; self.localVolSlope = localVolSlope
         self.crashCorrOn = crashCorrOn; self.crashCorrSlope = crashCorrSlope
         self.chargesOn = chargesOn; self.skewSlope = skewSlope; self.barrierShift = barrierShift
@@ -262,6 +270,7 @@ extension Instrument {
         ust3m: 0.0389, ust1y: 0.0411, ust2y: 0.0431,
         ust3y: 0.0434, ust5y: 0.0441, ust7y: 0.0453,
         spreadShort: 0.004, spreadLong: 0.006, volShift: 0,
+        markVol: [:], markSpot: [:],
         localVolOn: false, localVolSlope: 0.010,
         crashCorrOn: false, crashCorrSlope: 0.05,
         chargesOn: true, skewSlope: 0.010, barrierShift: 0.01,
@@ -276,6 +285,19 @@ extension Instrument {
         if call == .none { snowball = false; lockIn = false }
         if snowball { memory = false }
         if couponObs == .european { memory = false }
+        let keep = Set(members)
+        markVol = markVol.filter { keep.contains($0.key) }
+        markSpot = markSpot.filter { keep.contains($0.key) }
+    }
+
+    /// ATM used by the Monte Carlo: typed snapshot, else catalog.
+    public func atmVol(for ticker: String) -> Double {
+        markVol[ticker] ?? Market.asset(ticker).vol
+    }
+
+    /// Display spot: typed snapshot, else catalog. Does not enter the SDE.
+    public func displaySpot(for ticker: String) -> Double {
+        markSpot[ticker] ?? Market.asset(ticker).spot
     }
 
     public func jsonString() -> String? {
@@ -292,7 +314,7 @@ extension Instrument {
     }
 
     /// Synthesized Codable requires every key. Saved specs from before local vol
-    /// / crash corr are patched with the off defaults rather than failing to restore.
+    /// / crash corr / user marks are patched with the off / empty defaults.
     static func decodeInstrument(_ data: Data) -> Instrument? {
         let dec = JSONDecoder()
         if let s = try? dec.decode(Instrument.self, from: data) { return s }
@@ -302,6 +324,8 @@ extension Instrument {
         if obj["localVolSlope"] == nil { obj["localVolSlope"] = 0.01; patched = true }
         if obj["crashCorrOn"] == nil { obj["crashCorrOn"] = false; patched = true }
         if obj["crashCorrSlope"] == nil { obj["crashCorrSlope"] = 0.05; patched = true }
+        if obj["markVol"] == nil { obj["markVol"] = [String: Double](); patched = true }
+        if obj["markSpot"] == nil { obj["markSpot"] = [String: Double](); patched = true }
         guard patched,
               let d2 = try? JSONSerialization.data(withJSONObject: obj),
               let s = try? dec.decode(Instrument.self, from: d2) else { return nil }

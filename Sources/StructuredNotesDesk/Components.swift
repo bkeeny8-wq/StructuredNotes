@@ -134,6 +134,7 @@ struct LeverField: Equatable {
     static let mult   = LeverField(scale: 1,     decimals: 2, suffix: "×")
     static let volV   = LeverField(scale: 100,   decimals: 1, suffix: "v")
     static let volPts = LeverField(scale: 100,   decimals: 0, suffix: "pts", signed: true)
+    static let px     = LeverField(scale: 1,     decimals: 2)
     static let stepPct = LeverField(scale: 100,  decimals: 0, suffix: "%/yr")
     static let capPct = LeverField(scale: 100, offset: -100, decimals: 0, suffix: "%")
 }
@@ -165,7 +166,7 @@ struct LeverRow: View {
                             .multilineTextAlignment(.trailing)
                             .font(.footnote.monospaced().weight(.semibold))
                             .foregroundStyle(focused ? Theme.opt : Theme.ink)
-                            .frame(width: 62, alignment: .trailing)
+                            .frame(width: 76, alignment: .trailing)
                             .onSubmit { commit(f) }
                             .onChange(of: focused) { _, now in if !now { commit(f) } }
                             .toolbar {

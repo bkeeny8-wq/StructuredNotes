@@ -1,6 +1,6 @@
 // swift-tools-version: 5.9
-// Engine-only package so `swift test` can run the golden suite without SwiftUI.
-// The iPad app still builds from StructuredNotesDesk.xcodeproj.
+// Engine + teaching-copy package so `swift test` can run the golden suite
+// without SwiftUI. The iPad app still builds from StructuredNotesDesk.xcodeproj.
 
 import PackageDescription
 
@@ -19,7 +19,6 @@ let package = Package(
             path: "Sources/StructuredNotesDesk",
             exclude: [
                 "DeskView.swift",
-                "Teach.swift",
                 "Components.swift",
                 "StructuredNotesDesk.h"
             ]

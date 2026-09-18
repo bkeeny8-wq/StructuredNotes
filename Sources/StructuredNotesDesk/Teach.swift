@@ -234,6 +234,21 @@ public enum Teach {
                 why: "Steeper spike means names couple harder exactly when the basket is down. Watch worst-of and weighted separately — they often move opposite ways. This is not a calibrated surface.",
                 twoSided: true)
         }
+        if a.markVol != b.markVol {
+            let keys = Set(a.markVol.keys).union(b.markVol.keys).sorted()
+            let t = keys.first { moved(a.atmVol(for: $0), b.atmVol(for: $0)) } ?? keys.first ?? b.members.first ?? "name"
+            return ChangeNote(
+                label: "\(t) ATM \(String(format: "%.1f", a.atmVol(for: t) * 100))% → \(String(format: "%.1f", b.atmVol(for: t) * 100))% (your snapshot)",
+                why: "You overwrote the compiled catalog ATM. This is your snapshot, not a live implied, and it persists with the spec. The Monte Carlo uses this vol plus the parallel vol shift. Higher vol widens outcomes: a sold knock-in or buffer is usually worth less to you; owned optionality is the other way.",
+                twoSided: true)
+        }
+        if a.markSpot != b.markSpot {
+            let keys = Set(a.markSpot.keys).union(b.markSpot.keys).sorted()
+            let t = keys.first { moved(a.displaySpot(for: $0), b.displaySpot(for: $0)) } ?? keys.first ?? b.members.first ?? "name"
+            return ChangeNote(
+                label: "\(t) spot \(String(format: "%.2f", a.displaySpot(for: t))) → \(String(format: "%.2f", b.displaySpot(for: t))) (your snapshot)",
+                why: "Spot is display-only. Paths run in return space, so this number does not change the mark. ATM vol on the same card is the input that prices. Still your snapshot, not a live print.")
+        }
         if moved(a.volShift, b.volShift) {
             return ChangeNote(
                 label: "Vol shift \(String(format: "%+.0f", a.volShift * 100)) → \(String(format: "%+.0f", b.volShift * 100)) pts",
@@ -691,6 +706,49 @@ public enum Teach {
                    s.couponBarrier = 0.70; s.memory = true
                    s.call = .autocall; s.callObs = .monthly; s.nonCallMonths = 3
                    s.downside = .kiPut; s.protection = 0.55
+               }),
+
+        Lesson(number: 12,
+               title: "Issuer call is not autocall at 100%",
+               goal: "See the difference between a forced 100% trigger and a small Longstaff–Schwartz exercise.",
+               steps: ["A three-name income note with issuer call, quarterly after a 6-month lockout.",
+                       "Read expected life and the called-by chart — this is the LS fit, not a contractual trigger.",
+                       "Switch Callability to Autocall and leave the trigger at 100%. Compare expected life and value."],
+               notice: "Autocall at 100% redeems every path that prints at or above par on an observation. Issuer call lets the bank keep cheap funding when the note is still a good deal for them, and only pull it when continuation is worth more than redemption. The model here is a four-regressor Longstaff–Schwartz (1, z, z², knocked) — a cartoon of that idea, not a desk LSMC. The autocall-at-100% number is a holder-unfriendly bound, not the contract.",
+               spec: build { s in
+                   s.members = ["SPX", "NDX", "RTY"]
+                   s.coupon = .contingent; s.couponRate = 0.11; s.couponObs = .quarterly
+                   s.couponBarrier = 0.70
+                   s.call = .issuerCall; s.callObs = .quarterly; s.nonCallMonths = 6
+                   s.downside = .kiPut; s.protection = 0.60
+               }),
+
+        Lesson(number: 13,
+               title: "A smile in the paths, not only a charge",
+               goal: "Compare a flat-vol knock-in plus skew charge with a local-vol smile inside the Monte Carlo.",
+               steps: ["A single-name 60% knock-in with Charges on and local vol off. Read the skew line in the offer build-up.",
+                       "Turn local vol on in Underlying. The skew charge goes to zero — the smile is now in the paths.",
+                       "Turn local vol back off and drag the skew slope. Do not run both: the engine already refuses to double-count."],
+               notice: "The skew charge reprices the downside leg at strike vol after a flat-vol Monte Carlo. Local vol puts the same slope into σ(x) so the barrier can actually be hit more often. A desk Dupire surface is calibrated to listed options and depends on time; this is a one-parameter cartoon, default off. The two answers will not match to a point — they are two different ways of admitting the wing exists.",
+               spec: build { s in
+                   s.members = ["NVDA"]
+                   s.coupon = .guaranteed; s.couponRate = 0.105; s.couponObs = .quarterly
+                   s.downside = .kiPut; s.protection = 0.60
+                   s.chargesOn = true
+               }),
+
+        Lesson(number: 14,
+               title: "Crash corr is two-sided: worst-of vs weighted",
+               goal: "Watch a selloff spike in ρ move a worst-of KI and a weighted KI in opposite directions.",
+               steps: ["A three-index 70/60 income note, worst-of, one ρ. Turn crash corr on and read the value.",
+                       "Switch the basket from worst-of to weighted. Leave the spike on.",
+                       "Turn crash corr off and on again on the weighted build, then switch back to worst-of."],
+               notice: "A worst-of holder is long correlation: when names couple in a crash there is less dispersion, so the worst is less bad and the KI you sold can cheapen. A weighted basket's variance rises with ρ, so the same spike fattens the left tail and the KI gets more expensive. One ρ cannot show that. This spike is a one-parameter cartoon (per-step Cholesky), not a desk term/spot corr surface. Default off.",
+               spec: build { s in
+                   s.members = ["SPX", "NDX", "RTY"]; s.correlation = 0.75
+                   s.coupon = .contingent; s.couponRate = 0.10; s.couponObs = .quarterly
+                   s.couponBarrier = 0.70
+                   s.downside = .kiPut; s.protection = 0.60
                }),
     ]
 

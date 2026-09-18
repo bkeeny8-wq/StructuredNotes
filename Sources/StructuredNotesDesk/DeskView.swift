@@ -195,11 +195,16 @@ public struct DeskView: View {
             }
             ForEach(spec.members, id: \.self) { m in
                 let a = Market.asset(m)
-                let px = a.spot == 0 ? "—" : (a.spot < 1000 ? String(format: "%.2f", a.spot) : Fmt.usd0(a.spot))
-                Text("\(a.ticker) — \(a.name) · \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? " modeled" : " est") · q \(Fmt.pct(a.div, 2))")
+                Text("\(a.ticker) — \(a.name) · q \(Fmt.pct(a.div, 2))\(a.sourced ? " · catalog modeled" : " · catalog est")")
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
+                LeverRow(label: "\(a.ticker) spot (your snapshot)",
+                         value: markSpotBinding(m),
+                         range: 0...100_000, step: 1, field: .px)
+                LeverRow(label: "\(a.ticker) ATM vol (your snapshot)",
+                         value: markVolBinding(m),
+                         range: 0.05...1.20, step: 0.005, field: .volV)
             }
-            Text(Market.asOf)
+            Text("ATM vol and spot above are *your* snapshot and persist with this spec — not a live implied, and nothing is fetched. Catalog seed: \(Market.asOf). Paths run in return space, so spot is display-only; ATM vol (plus the parallel vol shift) is what the Monte Carlo uses.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if spec.members.count > 1 {
@@ -648,6 +653,18 @@ public struct DeskView: View {
         return w / total
     }
 
+    private func markVolBinding(_ ticker: String) -> Binding<Double> {
+        Binding(
+            get: { spec.atmVol(for: ticker) },
+            set: { v in mutate { $0.markVol[ticker] = v } })
+    }
+
+    private func markSpotBinding(_ ticker: String) -> Binding<Double> {
+        Binding(
+            get: { spec.displaySpot(for: ticker) },
+            set: { v in mutate { $0.markSpot[ticker] = v } })
+    }
+
     private func shareBinding(_ i: Int) -> Binding<Double> {
         Binding(
             get: { share(i) },
@@ -831,8 +848,8 @@ public struct DeskView: View {
          "The issuer redeems when a four-regressor fit (1, z, z², knocked) says continuation is worth more than redemption. A desk LSMC uses more basis functions, more paths, and often a funding-measure regression. Treat the call timing as directional, not a quote."),
         ("Barriers are watched at fixed times",
          "Monitored barriers are checked on their observation schedule. The daily setting adds a Brownian-bridge correction for touches between closes, which is close to continuous monitoring but not identical to it."),
-        ("Prices come from a stored snapshot",
-         "Levels, dividends and volatilities are a saved snapshot, not a live feed, and volatilities for most names are documented estimates rather than listed implieds. Directions and magnitudes are reliable; the last decimal is not."),
+        ("Prices come from a snapshot you own",
+         "ATM vols and spots start from the compiled catalog and you type over them on the Underlying card. They persist with the spec. There is no live feed and no background fetch — these are *your* marks, not listed implieds. Dividends stay on the catalog. Directions and magnitudes are reliable; the last decimal is not."),
         ("Lognormal paths",
          "Default returns are lognormal with constant volatility. Local vol makes σ a function of the level — still no jumps. Real markets gap, and gaps hurt barrier structures more than smooth diffusion does, which is part of what the model reserve in the charge stack is paying for."),
     ]
@@ -1233,6 +1250,9 @@ public struct DeskView: View {
         }
         if spec.crashCorrOn && spec.members.count > 1 {
             parts.append("crash corr +\(String(format: "%.2f", spec.crashCorrSlope))/10% down")
+        }
+        if !spec.markVol.isEmpty {
+            parts.append("your ATM snapshot")
         }
         if spec.coupon != .none {
             if spec.snowball {

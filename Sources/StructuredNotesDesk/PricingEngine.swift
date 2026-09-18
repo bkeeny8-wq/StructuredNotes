@@ -473,7 +473,8 @@ public enum Engine {
         var volSqdt = [Double](), volSqdtSub = [Double](), varDt = [Double](), varDtSub = [Double]()
         for (j, a) in assets.prefix(nA).enumerated() {
             let applies = bumpAsset == nil || bumpAsset == j
-            let v = max(0.01, a.vol + s.volShift + (applies ? volBump : 0))
+            let atm = s.atmVol(for: a.ticker)
+            let v = max(0.01, atm + s.volShift + (applies ? volBump : 0))
             vols.append(v); divsArr.append(a.div)
             qv.append((a.div + v * v / 2) * dt)
             qvSub.append((a.div + v * v / 2) * dtSub)
