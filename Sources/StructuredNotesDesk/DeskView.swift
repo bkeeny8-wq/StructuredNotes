@@ -65,9 +65,11 @@ public struct DeskView: View {
         .onAppear {
             if !didRestore {
                 didRestore = true
-                if let saved = Instrument.fromJSON(specJSON), saved != spec {
-                    spec = saved
+                if let saved = Instrument.fromJSON(specJSON) {
+                    if saved != spec { spec = saved }
+                    else { reprice() }
                 } else {
+                    if !specJSON.isEmpty { specJSON = spec.jsonString() ?? "" }
                     reprice()
                 }
             }
@@ -95,13 +97,18 @@ public struct DeskView: View {
         FlexibleWrap(spacing: 6) {
             Button {
                 pinnedJSON = spec.jsonString() ?? ""
-                pinnedMarkRaw = result.map { String(format: "%.12f", $0.value) } ?? ""
+                if !pricing, let v = result?.value {
+                    pinnedMarkRaw = String(format: "%.12f", v)
+                } else {
+                    pinnedMarkRaw = ""
+                }
             } label: {
                 Label(pinnedJSON.isEmpty ? "Pin build" : "Re-pin", systemImage: "pin")
                     .font(.system(size: 12, weight: .semibold))
             }
             .buttonStyle(.bordered)
             .tint(Theme.ink)
+            .disabled(pricing)
             ShareLink(item: Teach.termSheetPlain(spec, offer: charges?.offer)) {
                 Label("Share term sheet", systemImage: "square.and.arrow.up")
                     .font(.system(size: 12, weight: .semibold))
@@ -325,11 +332,19 @@ public struct DeskView: View {
                                 mutate { s in
                                     if s.snowball { s.snowballRate = c } else { s.couponRate = c }
                                 }
-                                solverNote = snapshot.chargesOn
-                                    ? "Set so the dealer offer prints at par (charges held at the current stack, then refreshed)."
-                                    : (snapshot.call == .issuerCall
-                                       ? "Set so the model mid prints at par. Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
-                                       : "Set so the model mid prints at par — exact via Q on this schedule.")
+                                solverNote = {
+                                    var msg = snapshot.chargesOn
+                                        ? "Set so the dealer offer prints at par (charges held at the current stack, then refreshed)."
+                                        : "Set so the model mid prints at par"
+                                    if snapshot.call == .issuerCall {
+                                        msg += snapshot.chargesOn
+                                            ? " Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
+                                            : ". Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
+                                    } else if !snapshot.chargesOn {
+                                        msg += " — exact via Q on this schedule."
+                                    }
+                                    return msg
+                                }()
                             } else {
                                 solverNote = "No coupon dates survive on this build, so there is no rate that prints par."
                             }
@@ -420,7 +435,7 @@ public struct DeskView: View {
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
                 if spec.call == .issuerCall {
-                    Text("Issuer may call at any observation after the non-call period. Exercise is a small Longstaff–Schwartz step: the bank redeems when fitted continuation exceeds par plus any call premium (basis 1, z, z², knocked). Directionally right — rich coupons get called, cheap zeros are left outstanding — not a desk LSMC.")
+                    Text("Issuer may call at any observation after the non-call period. Exercise is a small Longstaff–Schwartz step: the bank redeems when fitted continuation exceeds redemption — par plus any call premium, plus snowball if it is on (basis 1, z, z², knocked). Directionally right — rich coupons get called, cheap zeros are left outstanding — not a desk LSMC.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
@@ -789,7 +804,7 @@ public struct DeskView: View {
         Card(title: "Start here") {
             Text("Nothing is switched on yet, so what you are looking at is the raw material of every structured note: a promise from the bank to repay $1,000 in \(termStr(spec.termYears)), and nothing else.")
                 .font(.system(size: 12.5))
-            Text("Read the value below. The gap between it and par is the issuer's funding cost over the term — and that gap is the entire budget available to buy coupons, participation, or protection. Switch a block on in the rail to spend it.")
+            Text("Read the value below. The gap between it and par is the issuer's funding cost over the term — and that gap is the entire budget available to buy coupons, participation, or protection. Switch a block on in the \(isCompact ? "builder" : "rail") to spend it.")
                 .font(.system(size: 12.5)).foregroundStyle(.secondary)
             Button {
                 tab = .learn
@@ -925,7 +940,7 @@ public struct DeskView: View {
         case .buffer:
             return "losses beyond the first \(Fmt.pct(1 - spec.protection, 0)) decline\(spec.gearedBuffer ? ", at an accelerated \(String(format: "%.2g", 1 / spec.protection))× rate below the buffer" : "") — \(Fmt.pct(r.probLoss, 0)) of paths."
         case .kiPut:
-            return "full downside from the start if the \(spec.members.count > 1 ? "worst performer" : "underlier") \(spec.protObs == .european ? "finishes" : "ever trades") below \(Fmt.pct(spec.protection, 0)) — \(Fmt.pct(r.probLoss, 0)) of paths\(spec.secondChance ? " (forgiven if the final level recovers above \(Fmt.pct(spec.secondChanceLevel, 0)))" : "")."
+            return "full downside from the start if the \(spec.members.count > 1 ? (spec.basket == .worstOf ? "worst performer" : "weighted basket") : "underlier") \(spec.protObs == .european ? "finishes" : (spec.protObs == .daily ? "prints a monthly close or a Brownian-bridge touch" : "prints an observation")) below \(Fmt.pct(spec.protection, 0)) — \(Fmt.pct(r.probLoss, 0)) of paths\(spec.secondChance ? " (forgiven if the final level recovers above \(Fmt.pct(spec.secondChanceLevel, 0)))" : "")."
         }
     }
 
@@ -1005,7 +1020,7 @@ public struct DeskView: View {
         Card(title: "Guided lessons") {
             let done = doneLessons
             let next = Teach.lessons.first { !done.contains($0.number) }
-            Text("\(done.count) of \(Teach.lessons.count) loaded. Each one drops a structure into the rail and tells you what to do to it and what to watch.")
+            Text("\(done.count) of \(Teach.lessons.count) loaded. Each one drops a structure into the \(isCompact ? "builder" : "rail") and tells you what to do to it and what to watch.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             if let next {
@@ -1093,7 +1108,7 @@ public struct DeskView: View {
 
     private var termSheetCard: some View {
         Card(title: "The same note, as a term sheet") {
-            Text("Clients never see a slider. They see this. Every line below is generated from the build in the rail, in the language a prospectus would use.")
+            Text("Clients never see a slider. They see this. Every line below is generated from the build in the \(isCompact ? "builder" : "rail"), in the language a prospectus would use.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             ForEach(Teach.termSheet(spec, offer: charges?.offer), id: \.0) { label, value in
@@ -1105,7 +1120,7 @@ public struct DeskView: View {
                 .padding(.vertical, 4)
                 .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
             }
-            Text("Read it against the rail: each phrase here is a lever you just dragged. The two most under-read lines on a real term sheet are the barrier observation and the estimated value.")
+            Text("Read it against the \(isCompact ? "builder" : "rail"): each phrase here is a lever you just dragged. The two most under-read lines on a real term sheet are the barrier observation and the estimated value.")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
             ShareLink(item: Teach.termSheetPlain(spec, offer: charges?.offer)) {
@@ -1191,15 +1206,32 @@ public struct DeskView: View {
 
     private var valueCard: some View {
         Card(title: "Model value — % of par") {
-            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                Text(result.map { Fmt.pct($0.value, 2) } ?? "…")
-                    .font(.system(size: 32, weight: .bold, design: .monospaced))
-                    .foregroundStyle(Theme.bond)
-                if pricing { ProgressView().controlSize(.small) }
-                if let r = result {
-                    let dlt = (r.value - 1) * 100
-                    Text(String(format: "vs par: %+.2f pts", dlt) + (dlt < 0 ? " — room for fees/margin at par issue" : " — rich to par; restructure"))
-                        .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+            if isCompact {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(alignment: .firstTextBaseline, spacing: 12) {
+                        Text(result.map { Fmt.pct($0.value, 2) } ?? "…")
+                            .font(.system(size: 32, weight: .bold, design: .monospaced))
+                            .foregroundStyle(Theme.bond)
+                        if pricing { ProgressView().controlSize(.small) }
+                    }
+                    if let r = result {
+                        let dlt = (r.value - 1) * 100
+                        Text(String(format: "vs par: %+.2f pts", dlt) + (dlt < 0 ? " — room for fees/margin at par issue" : " — rich to par; restructure"))
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true)
+                    }
+                }
+            } else {
+                HStack(alignment: .firstTextBaseline, spacing: 12) {
+                    Text(result.map { Fmt.pct($0.value, 2) } ?? "…")
+                        .font(.system(size: 32, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Theme.bond)
+                    if pricing { ProgressView().controlSize(.small) }
+                    if let r = result {
+                        let dlt = (r.value - 1) * 100
+                        Text(String(format: "vs par: %+.2f pts", dlt) + (dlt < 0 ? " — room for fees/margin at par issue" : " — rich to par; restructure"))
+                            .font(.system(size: 12, design: .monospaced)).foregroundStyle(.secondary)
+                    }
                 }
             }
             Text(configSummary)
@@ -1454,7 +1486,9 @@ public struct DeskView: View {
                  "\(cName) = \(rateDec) (\(Fmt.pct(rate, 2)) p.a.)",
                  "coupon leg = \(cName) × Q = \(rateDec) × \(qStr) = \(legDec) = \(Fmt.pct(r.couponLeg, 2)) of par = \(Fmt.usd0(r.couponLeg * notional)) per $1,000",
                  "coupons expected: \(String(format: "%.1f", r.avgCoupons))"],
-                "Q is the note's own discounted count of coupons that actually get paid — not the number of dates on the schedule, but what survives after barriers and early calls take their toll. Multiply the headline rate by Q and you have the whole income leg, exactly. If you learn one number from this app, learn Q: comparing two income notes means comparing rate times Q, not rate.")
+                spec.call == .issuerCall
+                ? "At this frozen spec, coupon leg = c × Q still ties exactly. Q itself is not frozen: issuer LS exercise depends on the coupon, so dragging the rate changes which paths survive and Q moves with it. Coupon-to-par therefore iterates rather than taking one Q shot."
+                : "Q is the note's own discounted count of coupons that actually get paid — not the number of dates on the schedule, but what survives after barriers and early calls take their toll. Multiply the headline rate by Q and you have the whole income leg, exactly. If you learn one number from this app, learn Q: comparing two income notes means comparing rate times Q, not rate.")
         }
 
         if r.premiumLeg > 0.0005 {
@@ -1563,14 +1597,28 @@ public struct DeskView: View {
                         StatCard(title: "Mark", value: Fmt.pct(g.mark, 1), sub: "of par")
                         StatCard(title: "Delta", value: String(format: "%+.2f", g.delta * notional),
                                  sub: "per 1% spot", color: g.delta >= 0 ? Theme.bond : Theme.loss)
-                        StatCard(title: "Vega", value: String(format: "%+.2f", g.vega * notional),
-                                 sub: "per vol pt", color: g.vega >= 0 ? Theme.bond : Theme.loss)
-                        StatCard(title: "Gamma",
-                                 value: abs(g.gamma) * notional < 0.5 ? "≈0" : (g.gamma >= 0 ? "Long" : "Short"),
-                                 sub: abs(g.gamma) * notional < 0.5 ? "flat / sampling noise"
-                                    : (g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs"),
-                                 color: abs(g.gamma) * notional < 0.5 ? Theme.fee
-                                    : (g.gamma >= 0 ? Theme.bond : Theme.loss))
+                        if !isCompact {
+                            StatCard(title: "Vega", value: String(format: "%+.2f", g.vega * notional),
+                                     sub: "per vol pt", color: g.vega >= 0 ? Theme.bond : Theme.loss)
+                            StatCard(title: "Gamma",
+                                     value: abs(g.gamma) * notional < 0.5 ? "≈0" : (g.gamma >= 0 ? "Long" : "Short"),
+                                     sub: abs(g.gamma) * notional < 0.5 ? "flat / sampling noise"
+                                        : (g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs"),
+                                     color: abs(g.gamma) * notional < 0.5 ? Theme.fee
+                                        : (g.gamma >= 0 ? Theme.bond : Theme.loss))
+                        }
+                    }
+                    if isCompact {
+                        HStack(spacing: 8) {
+                            StatCard(title: "Vega", value: String(format: "%+.2f", g.vega * notional),
+                                     sub: "per vol pt", color: g.vega >= 0 ? Theme.bond : Theme.loss)
+                            StatCard(title: "Gamma",
+                                     value: abs(g.gamma) * notional < 0.5 ? "≈0" : (g.gamma >= 0 ? "Long" : "Short"),
+                                     sub: abs(g.gamma) * notional < 0.5 ? "flat / sampling noise"
+                                        : (g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs"),
+                                     color: abs(g.gamma) * notional < 0.5 ? Theme.fee
+                                        : (g.gamma >= 0 ? Theme.bond : Theme.loss))
+                        }
                     }
                     HStack(spacing: 8) {
                         StatCard(title: "Correlation",
@@ -1578,9 +1626,18 @@ public struct DeskView: View {
                                  sub: "per +0.05 ρ", color: g.corr >= 0 ? Theme.bond : Theme.loss)
                         StatCard(title: "Funding DV", value: String(format: "%+.2f", g.fundingDV * notional),
                                  sub: "per +10bp spread")
-                        StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
-                                 sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
-                        StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                        if !isCompact {
+                            StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
+                                     sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
+                            StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                        }
+                    }
+                    if isCompact {
+                        HStack(spacing: 8) {
+                            StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
+                                     sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
+                            StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                        }
                     }
                 }
             } else {
@@ -1590,6 +1647,36 @@ public struct DeskView: View {
                 .foregroundStyle(.secondary).padding(.top, 8)
             if assetRisk.isEmpty {
                 ProgressView("Bumping each name alone…").font(.footnote)
+            } else if isCompact {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(assetRisk) { row in
+                        HStack {
+                            Text(row.ticker).font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            Spacer()
+                            Text("Δ " + String(format: "%+.2f", row.delta * notional))
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(row.delta >= 0 ? Theme.opt : Theme.loss)
+                            Text("vega " + String(format: "%+.2f", row.vega * notional))
+                                .font(.system(size: 12, design: .monospaced))
+                                .foregroundStyle(row.vega >= 0 ? Theme.bond : Theme.loss)
+                        }
+                        .padding(.vertical, 3)
+                        .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+                    }
+                    let td = assetRisk.reduce(0) { $0 + $1.delta }
+                    let tv = assetRisk.reduce(0) { $0 + $1.vega }
+                    HStack {
+                        Text("Total").font(.system(size: 13, weight: .bold))
+                        Spacer()
+                        Text("Δ " + String(format: "%+.2f", td * notional))
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                        Text("vega " + String(format: "%+.2f", tv * notional))
+                            .font(.system(size: 12, weight: .bold, design: .monospaced))
+                    }
+                    .padding(.vertical, 3)
+                }
+                Text("Each row bumps that name alone, the others held flat — where the hedge actually trades. Worst-of loads the highest-vol name; totals ≈ the parallel bump up to cross terms.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
             } else {
                 HStack {
                     Text("Name").font(.system(size: 11, weight: .bold)).frame(width: 70, alignment: .leading)
@@ -1646,30 +1733,32 @@ public struct DeskView: View {
                         .font(.system(size: 12, weight: .bold))
                         .padding(.top, 2)
                     let isKI = block.title.contains("KI")
-                    let level = (isKI ? spec.protection : spec.callTrigger) * 100
+                    let isIssuer = block.title.localizedCaseInsensitiveContains("issuer")
+                    let plotMark = isKI || isIssuer
+                    let level = (isKI ? spec.protection : (isIssuer ? 1.0 : spec.callTrigger)) * 100
                     Chart {
                         ForEach(block.rows) { row in
                             LineMark(x: .value("Spot", row.spot * 100),
-                                     y: .value(isKI ? "Mark" : "Delta",
-                                               isKI ? row.mark * 100 : row.delta * notional))
+                                     y: .value(plotMark ? "Mark" : "Delta",
+                                               plotMark ? row.mark * 100 : row.delta * notional))
                                 .foregroundStyle(isKI ? Theme.bond : Theme.opt)
                                 .lineStyle(StrokeStyle(lineWidth: 2.2))
                             PointMark(x: .value("Spot", row.spot * 100),
-                                      y: .value(isKI ? "Mark" : "Delta",
-                                                isKI ? row.mark * 100 : row.delta * notional))
+                                      y: .value(plotMark ? "Mark" : "Delta",
+                                                plotMark ? row.mark * 100 : row.delta * notional))
                                 .foregroundStyle(isKI ? Theme.bond : Theme.opt)
                                 .symbolSize(18)
                         }
                         RuleMark(x: .value("Level", level))
                             .foregroundStyle((isKI ? Theme.loss : Theme.opt).opacity(0.7))
                             .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [4, 4]))
-                        if !isKI {
+                        if !plotMark {
                             RuleMark(y: .value("Zero", 0))
                                 .foregroundStyle(Color.gray.opacity(0.6))
                                 .lineStyle(StrokeStyle(lineWidth: 0.8))
                         }
                     }
-                    .chartYAxisLabel(isKI ? "Mark % par" : "Delta $/1k")
+                    .chartYAxisLabel(plotMark ? "Mark % par" : "Delta $/1k")
                     .frame(height: 120)
                     Text(block.caption)
                         .font(.system(size: 10)).foregroundStyle(.secondary)
@@ -1700,7 +1789,7 @@ public struct DeskView: View {
                             .foregroundStyle(Theme.loss.opacity(0.7))
                             .lineStyle(StrokeStyle(lineWidth: 1.1, dash: [4, 4]))
                     }
-                    if spec.call != .none {
+                    if spec.call == .autocall {
                         RuleMark(x: .value("Trigger", spec.callTrigger * 100))
                             .foregroundStyle(Theme.opt.opacity(0.7))
                             .lineStyle(StrokeStyle(lineWidth: 1, dash: [3, 4]))
@@ -1713,13 +1802,15 @@ public struct DeskView: View {
                         BarMark(x: .value("Spot", row.spot * 100),
                                 y: .value("Delta", row.delta * notional),
                                 width: 12)
-                            .foregroundStyle(nearBarrier(row.spot) || (spec.call != .none && abs(row.spot - spec.callTrigger) < 0.03)
+                            .foregroundStyle(nearBarrier(row.spot) || (spec.call == .autocall && abs(row.spot - spec.callTrigger) < 0.03)
                                              ? Theme.loss : Theme.opt)
                     }
                 }
                 .chartYAxisLabel("Delta $/1k")
                 .frame(height: 100)
-                Text("The cliff, the flattening, the pins — red bars mark where hedges die: the barrier zone and the trigger.")
+                Text(spec.call == .autocall
+                     ? "The cliff, the flattening, the pins — red bars mark where hedges die: the barrier zone and the trigger."
+                     : "The cliff, the flattening, the pins — red bars mark where hedges die at the barrier. Issuer call is not a 100% trigger, so there is no autocall pin on this chart.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
@@ -1891,8 +1982,8 @@ public struct DeskView: View {
                     }
                     self.prevSpec = snapshot
                     self.prevValue = r.value
+                    self.pricing = false
                 }
-                self.pricing = false
             }
             let tail: (ChargeStack, [Engine.AssetRisk], [Engine.EventBlock], [LadderRow], [LedgerRow])? = await withCheckedContinuation { cont in
                 Self.mcQueue.async {

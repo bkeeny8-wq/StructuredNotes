@@ -718,4 +718,65 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertGreaterThan(both.downsideLeg, loc.downsideLeg + 0.0003)
         XCTAssertLessThan(both.value, loc.value - 0.0003)
     }
+
+    func testMonthlyKIWithAsianDoesNotWatchTheDailyGrid() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.80
+        s.averaging = .lastMonth
+        s.chargesOn = false
+        s.protObs = .monthly
+        let monthly = Engine.price(s, paths: Engine.fastPaths)
+        s.protObs = .daily
+        let daily = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertGreaterThanOrEqual(daily.probLoss, monthly.probLoss)
+        XCTAssertLessThan(daily.value, monthly.value - 0.0002)
+        XCTAssertGreaterThan(daily.downsideLeg, monthly.downsideLeg)
+    }
+
+    func testCouponRateChangeWithIssuerCallIsNotStraightLineCopy() {
+        var a = Instrument.initial
+        a.coupon = .guaranteed
+        a.couponRate = 0.08
+        a.call = .issuerCall
+        a.callObs = .quarterly
+        var b = a
+        b.couponRate = 0.12
+        let note = Teach.describeChange(from: a, to: b)
+        XCTAssertNotNil(note)
+        XCTAssertFalse(note?.why.contains("straight line") ?? true)
+        XCTAssertTrue(note?.why.localizedCaseInsensitiveContains("issuer") ?? false)
+    }
+
+    func testIssuerFirstCallEventDoesNotForceACheapZeroToPar() {
+        var s = Instrument.initial
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        let ev = Engine.eventScenarios(s)
+        let issuer = ev.first { $0.title.localizedCaseInsensitiveContains("issuer") }
+        XCTAssertNotNil(issuer)
+        let atPar = issuer?.rows.first { abs($0.spot - 1.0) < 1e-9 }
+        XCTAssertNotNil(atPar)
+        XCTAssertLessThan(atPar?.mark ?? 1, 0.99)
+        XCTAssertTrue(issuer?.caption.contains("not a 100% trigger") ?? false)
+    }
+
+    func testLegacyJSONPatchesEmptyMarkObjects() throws {
+        var s = Instrument.initial
+        s.coupon = .guaranteed
+        let data = try JSONEncoder().encode(s)
+        guard var obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return XCTFail("not a dictionary")
+        }
+        obj.removeValue(forKey: "markVol")
+        obj.removeValue(forKey: "markSpot")
+        let raw = String(data: try JSONSerialization.data(withJSONObject: obj), encoding: .utf8) ?? ""
+        let back = Instrument.fromJSON(raw)
+        XCTAssertNotNil(back)
+        XCTAssertTrue(back?.markVol.isEmpty ?? false)
+        XCTAssertTrue(back?.markSpot.isEmpty ?? false)
+        XCTAssertEqual(back?.atmVol(for: "SPX") ?? 0, Market.asset("SPX").vol, accuracy: 1e-12)
+    }
 }

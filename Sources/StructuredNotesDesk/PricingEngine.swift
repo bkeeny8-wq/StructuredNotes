@@ -659,15 +659,18 @@ public enum Engine {
 
                 var zNow = perf(x, s)
                 if isFinal && nSubs > 0 {
-                    let watchKI = s.downside == .kiPut && s.protObs != .european
-                    if watchKI || dailyBarrier {
+                    // Asian tail averages the *final level*. Only daily KI
+                    // (and coupon daily-monitor) should walk the 21 closes;
+                    // monthly/quarterly still knock on the month-end close.
+                    let watchDailyKI = s.downside == .kiPut && s.protObs == .daily
+                    if watchDailyKI || dailyBarrier {
                         var prevX = xPrev
                         var prevZ = zPrev
                         for sub in 0..<nSubs {
                             var day = [Double](repeating: 0, count: nA)
                             for j in 0..<nA { day[j] = closes[sub * nA + j] }
                             let zDay = perf(day, s)
-                            if watchKI && zDay < s.protection { knocked = true }
+                            if watchDailyKI && zDay < s.protection { knocked = true }
                             let u0 = base + (nSteps - 1 + sub) * nA
                             if localOn {
                                 for j in 0..<nA { vdtSubNow[j] = subVarDt[sub * nA + j] }
@@ -688,7 +691,7 @@ public enum Engine {
                                 }
                                 return basketVol * basketVol * dtSub
                             }()
-                            if watchKI && kiBridge && !knocked {
+                            if watchDailyKI && kiBridge && !knocked {
                                 if brownianHit(barrier: s.protection, prevX: prevX, nowX: day,
                                                zPrev: prevZ, zNow: zDay, nA: nA, worstOf: worstOf,
                                                varDt: vdtSubUse, basketVarDt: bvarSub,
@@ -724,8 +727,13 @@ public enum Engine {
                 let df = dfArr[i]
 
                 if isFinal && nSubs > 0 {
-                    if s.downside == .kiPut && s.protObs == .european && zNow < s.protection {
-                        knocked = true
+                    if s.downside == .kiPut {
+                        if s.protObs == .european {
+                            if zNow < s.protection { knocked = true }
+                        } else if s.protObs != .daily, isProtDate, perf(x, s) < s.protection {
+                            // Month-end close of the averaging window, not the average.
+                            knocked = true
+                        }
                     }
                 } else {
                     if isProtDate && zNow < s.protection { knocked = true }
@@ -1093,7 +1101,7 @@ public enum Engine {
                 out.append(EventBlock(
                     title: "At the first call observation · issuer exercise vs redemption",
                     rows: rows,
-                    caption: "On this date the issuer compares continuation of the remaining life to redemption (par plus any call premium). The model calls when a small LS fit says continuation is richer — min(C, R), not a 100% trigger. Four regressors, same paths as the mark; not a desk LSMC."))
+                    caption: "On this date the issuer compares continuation of the remaining life to redemption (par plus any call premium, plus snowball if it is on). The model calls when a small LS fit says continuation is richer — min(C, R), not a 100% trigger. Four regressors, same paths as the mark; not a desk LSMC."))
             } else {
                 let trigger = s.callTrigger
                 func valueAt(_ lvl: Double) -> Double {

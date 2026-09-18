@@ -324,8 +324,8 @@ extension Instrument {
         if obj["localVolSlope"] == nil { obj["localVolSlope"] = 0.01; patched = true }
         if obj["crashCorrOn"] == nil { obj["crashCorrOn"] = false; patched = true }
         if obj["crashCorrSlope"] == nil { obj["crashCorrSlope"] = 0.05; patched = true }
-        if obj["markVol"] == nil { obj["markVol"] = [String: Double](); patched = true }
-        if obj["markSpot"] == nil { obj["markSpot"] = [String: Double](); patched = true }
+        if obj["markVol"] == nil { obj["markVol"] = [:] as [String: Any]; patched = true }
+        if obj["markSpot"] == nil { obj["markSpot"] = [:] as [String: Any]; patched = true }
         guard patched,
               let d2 = try? JSONSerialization.data(withJSONObject: obj),
               let s = try? dec.decode(Instrument.self, from: d2) else { return nil }

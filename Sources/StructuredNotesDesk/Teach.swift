@@ -83,13 +83,13 @@ public enum Teach {
         case "coupon":
             return BlockHelp(
                 what: "The income leg. Guaranteed coupons pay in every scenario. Contingent coupons pay only when the underlying is at or above the coupon barrier on the observation date. A European coupon pays the full rate × tenor once at maturity — a 10% 3-year European is 30% at T, not a single 10% digital.",
-                moves: "Value rises one-for-one with the coupon rate against the annuity factor Q shown on the math tab. Anything that makes coupons harder to earn — a higher barrier, more frequent observations, a call that ends the note early — lowers value at the same headline rate.",
+                moves: "Value rises with the coupon rate against the annuity factor Q on the math tab. On a bullet or autocall, that move is one-for-one at frozen Q. An issuer call is different: exercise depends on the coupon, so Q itself moves when you drag the rate. Anything that makes coupons harder to earn — a higher barrier, more frequent observations, a call that ends the note early — lowers value at the same headline rate.",
                 watch: "Set a coupon with everything else off and watch value climb above par. No issuer can sell that. Something has to be sold to pay for it, which is what the downside block does.")
         case "call":
             return BlockHelp(
-                what: "Early redemption. An autocall triggers automatically when the underlying is at or above the trigger on an observation date. An issuer call is the bank's choice. Both stop the note and return par.",
+                what: "Early redemption. An autocall triggers automatically when the underlying is at or above the trigger on an observation date. An issuer call is the bank's choice. Both stop the note and return par plus any call premium (and snowball, if it is on).",
                 moves: "Adding a call lowers value at the same coupon, because the note is taken away in exactly the healthy scenarios where you were happy to keep collecting. That is why callable notes quote higher coupons than bullets.",
-                watch: "Turn the autocall on and watch value fall, then raise the trigger and watch it recover — a harder trigger means the note survives longer. Switch Autocall to Issuer call: the bank now exercises when a small LS fit says the remaining note is worth more than par, not when the underlier prints 100%. The called-by distribution on the Note tab shows where the early exits cluster.")
+                watch: "Turn the autocall on and watch value fall, then raise the trigger and watch it recover — a harder trigger means the note survives longer. Switch Autocall to Issuer call: the bank now exercises when a small LS fit says the remaining note is worth more than redemption (par plus premium and snowball, not a 100% print). The called-by distribution on the Note tab shows where the early exits cluster.")
         case "upside":
             return BlockHelp(
                 what: "What you receive at maturity if the market is up. Linear participation pays a share of the gain. A digital pays a fixed amount if the final level clears its strike. Absolute pays gains in both directions.",
@@ -301,6 +301,12 @@ public enum Teach {
             }
         }
         if moved(a.couponRate, b.couponRate), !b.snowball {
+            if b.call == .issuerCall {
+                return ChangeNote(
+                    label: "Coupon rate \(p(a.couponRate, 2)) → \(p(b.couponRate, 2))",
+                    why: "At a frozen spec, coupon leg = c × Q still ties. With issuer call, Q is not frozen: a richer coupon makes continuation more expensive for the bank, so more paths get called and Q shrinks. The move is not a straight line. That is why coupon-to-par iterates when this call is on.",
+                    twoSided: true)
+            }
             return ChangeNote(
                 label: "Coupon rate \(p(a.couponRate, 2)) → \(p(b.couponRate, 2))",
                 why: "This is the one lever that moves value in a straight line. Value changes by the rate change times the annuity factor Q on the math tab, and nothing else. If you want to know what a feature is worth, price it and then solve for the coupon change that offsets it.")
@@ -342,7 +348,7 @@ public enum Teach {
                                   why: "The note now redeems early whenever the underlying is at or above the trigger on an observation date. Notice which scenarios that removes: the healthy ones, where you were happily collecting coupons. You keep the bad paths and lose the good ones, which is why value falls and why callables quote higher coupons than bullets.")
             case .issuerCall:
                 return ChangeNote(label: "Issuer call on",
-                                  why: "The bank decides when to call. Exercise is a small Longstaff–Schwartz regression on (1, z, z², knocked) — the issuer redeems when fitted continuation exceeds par plus any call premium. That is the right economics and a cartoon of a desk LSMC, not a production exercise boundary.")
+                                  why: "The bank decides when to call. Exercise is a small Longstaff–Schwartz regression on (1, z, z², knocked) — the issuer redeems when fitted continuation exceeds redemption (par plus any call premium, plus snowball if it is on). That is the right economics and a cartoon of a desk LSMC, not a production exercise boundary.")
             }
         }
         if a.callObs != b.callObs {
