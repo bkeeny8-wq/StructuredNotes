@@ -161,6 +161,7 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertEqual(back.cap ?? 0, 1.30, accuracy: 1e-12)
         XCTAssertEqual(back.upside, .linear)
         XCTAssertEqual(Instrument.fromJSON(s.jsonString() ?? "")?.termYears ?? 0, 3, accuracy: 1e-12)
+        XCTAssertEqual(back.localVolOn, false)
     }
 
     func testDailyKIWithAsianTailKnocksAtLeastAsOftenAsEuropean() {
@@ -383,5 +384,90 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertEqual(r.value, 1.0, accuracy: 1e-6)
         XCTAssertGreaterThan(c, 0.02)
         XCTAssertLessThan(c, 0.12)
+    }
+
+    func testLeverageVolAtSpotIsATMAndRisesBelow() {
+        XCTAssertEqual(Engine.leverageVol(atm: 0.20, spot: 1.0, slope: 0.01), 0.20, accuracy: 1e-12)
+        XCTAssertEqual(Engine.leverageVol(atm: 0.20, spot: 1.10, slope: 0.01), 0.20, accuracy: 1e-12)
+        XCTAssertEqual(Engine.leverageVol(atm: 0.20, spot: 0.60, slope: 0.01), 0.24, accuracy: 1e-12)
+        XCTAssertEqual(Engine.leverageVol(atm: 0.20, spot: 0.60, slope: 0), 0.20, accuracy: 1e-12)
+    }
+
+    func testLocalVolDoesNotMoveGuaranteedNote() {
+        var s = guaranteedNote()
+        s.chargesOn = false
+        let flat = Engine.price(s, paths: 1)
+        s.localVolOn = true
+        s.localVolSlope = 0.025
+        let loc = Engine.price(s, paths: 1)
+        XCTAssertEqual(flat.value, loc.value, accuracy: 1e-12)
+        XCTAssertEqual(flat.couponLeg, loc.couponLeg, accuracy: 1e-12)
+    }
+
+    func testLocalVolDoesNotChangeRichIssuerCallDecision() {
+        var s = guaranteedNote(rate: 0.105)
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        s.localVolOn = true
+        s.localVolSlope = 0.010
+        let r = Engine.price(s, paths: 1)
+        XCTAssertEqual(r.probCalled, 1, accuracy: 1e-12)
+        XCTAssertEqual(r.expectedLife, 0.5, accuracy: 1e-12)
+    }
+
+    func testLocalVolZeroSlopeMatchesFlatOnKI() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        let flat = Engine.price(s, paths: Engine.fastPaths)
+        s.localVolOn = true
+        s.localVolSlope = 0
+        let loc = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertEqual(flat.value, loc.value, accuracy: 1e-12)
+        XCTAssertEqual(flat.downsideLeg, loc.downsideLeg, accuracy: 1e-12)
+    }
+
+    func testLocalVolMakesKIMoreExpensiveThanFlat() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        let flat = Engine.price(s, paths: Engine.fastPaths)
+        s.localVolOn = true
+        s.localVolSlope = 0.010
+        let loc = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertGreaterThan(loc.downsideLeg, flat.downsideLeg + 0.001)
+        XCTAssertLessThan(loc.value, flat.value - 0.001)
+    }
+
+    func testLocalVolZeroesSkewCharge() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = true
+        s.localVolOn = true
+        let mid = Engine.price(s, paths: 200)
+        let ch = Engine.charges(s, midValue: mid.value, vega: 0)
+        XCTAssertEqual(ch.skew, 0, accuracy: 1e-12)
+    }
+
+    func testLegacyJSONWithoutLocalVolStillDecodes() throws {
+        var s = Instrument.initial
+        s.coupon = .guaranteed
+        let data = try JSONEncoder().encode(s)
+        guard var obj = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return XCTFail("not a dictionary")
+        }
+        obj.removeValue(forKey: "localVolOn")
+        obj.removeValue(forKey: "localVolSlope")
+        let raw = String(data: try JSONSerialization.data(withJSONObject: obj), encoding: .utf8) ?? ""
+        let back = Instrument.fromJSON(raw)
+        XCTAssertNotNil(back)
+        XCTAssertEqual(back?.localVolOn, false)
+        XCTAssertEqual(back?.coupon, .guaranteed)
+        XCTAssertEqual(back?.termYears ?? 0, 3, accuracy: 1e-12)
     }
 }

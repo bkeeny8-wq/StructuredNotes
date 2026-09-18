@@ -23,7 +23,7 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 - Risk tab: what the Greeks mean for a note; model limitations honesty card
 - New `Teach.swift` (teaching copy kept apart from layout)
 
-Also: pin-and-compare two builds, lesson progress, share the term sheet, solve coupon to par (calendar-correct Q). Issuer call uses a small Longstaff–Schwartz exercise (not autocall-at-100%).
+Also: pin-and-compare two builds, lesson progress, share the term sheet, solve coupon to par (calendar-correct Q). Issuer call uses a small Longstaff–Schwartz exercise (not autocall-at-100%). Optional local-vol leverage function (default off) so a barrier can see a smile in the paths.
 
 Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 

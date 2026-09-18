@@ -74,7 +74,7 @@ public enum Teach {
             return BlockHelp(
                 what: "What the note watches. One name, or up to four in a basket. Nothing about the note's payoff refers to dollars — everything is measured as a percentage of each name's level on the pricing date.",
                 moves: "Higher volatility means a wider range of outcomes, which makes any protection you sold more valuable to the desk. A worst-of basket is the cheapest way to manufacture volatility without buying it: the worst of three names is far more likely to be down than any one of them.",
-                watch: "Add a third name and watch value fall at the same coupon. Then switch the basket from worst-of to weighted and watch it jump back. That gap is the correlation premium, and it is where most income-note coupons come from.")
+                watch: "Add a third name and watch value fall at the same coupon. Then switch the basket from worst-of to weighted and watch it jump back. That gap is the correlation premium. The local-vol toggle is off by default; turn it on to put a one-parameter smile in the paths so a knock-in can see wing vol instead of only a skew charge.")
         case "tenor":
             return BlockHelp(
                 what: "How long the note lives, and how the final level is measured. The Asian tail replaces the single closing level with an average of the last few daily fixings.",
@@ -225,6 +225,18 @@ public enum Teach {
                 label: "Vol shift \(String(format: "%+.0f", a.volShift * 100)) → \(String(format: "%+.0f", b.volShift * 100)) pts",
                 why: "Volatility widens the distribution of outcomes. If you have sold a put — a buffer or a knock-in — extra vol makes it more valuable to the desk and so the note is worth less to you. On a fully protected growth note with no downside sold, extra vol works the other way, because you own optionality instead of having sold it.",
                 twoSided: true)
+        }
+        if a.localVolOn != b.localVolOn {
+            return b.localVolOn
+                ? ChangeNote(label: "Local vol on",
+                             why: "Volatility now rises as a name trades down — σ(x) = σ_ATM + slope × max(1−x, 0) × 10. Barriers and puts see a smile in the paths, not only as a charge after the fact. A desk Dupire surface is calibrated to listed options and is time-dependent; this is a one-parameter cartoon. The skew charge is switched off while this is on, so the smile is not counted twice.")
+                : ChangeNote(label: "Local vol off",
+                             why: "Back to one flat volatility per name. The smile, if you want it, is the skew charge in the stack rather than something the paths themselves know about.")
+        }
+        if moved(a.localVolSlope, b.localVolSlope) {
+            return ChangeNote(
+                label: "Local-vol slope \(String(format: "%.1f", a.localVolSlope * 100)) → \(String(format: "%.1f", b.localVolSlope * 100))v per 10% below spot",
+                why: "Steeper downside leverage means more vol exactly where knock-ins live, so a barrier note is worth less to you and more to the desk. At-the-money and upside states are unchanged. This is not a calibrated surface — it is the same units as the skew charge, put into the SDE.")
         }
 
         // ---- tenor
@@ -766,7 +778,10 @@ public enum Teach {
               desk: "Cuts terminal variance and terminal gamma. Slightly lowers the expected final level under positive drift."),
         .init(name: "Skew",
               plain: "Out-of-the-money puts trade at higher implied volatility than at-the-money options. A flat-volatility model misses this.",
-              desk: "Repricing the downside leg at its own strike vol. Usually the largest charge on an income note."),
+              desk: "Default: reprice the downside leg at strike vol (the charge). Optional local vol puts the same slope into the paths instead. Do not run both."),
+        .init(name: "Local vol",
+              plain: "Volatility that changes with the level of the underlying — usually higher when the market is down.",
+              desk: "Here a one-parameter leverage function, default off. A desk Dupire / local-vol surface is calibrated to the listed smile and depends on time. Treat the toggle as a way to see a barrier react to a smile, not as a quote."),
         .init(name: "Overhedge",
               plain: "A charge for the fact that barriers and digitals cannot be hedged exactly, only approximately.",
               desk: "Shift every discontinuity against the client and reprice. The shift width is both the hedge and the charge."),
@@ -868,7 +883,7 @@ public enum Teach {
 /// Kept separate so the charges copy can be long without crowding the switch.
 enum TeachCopy {
     static let chargesHelp = BlockHelp(
-        what: "The bridge from a model mid to a price a desk could actually trade. Five costs: skew, overhedge, correlation bid-ask, vega bid-ask, and a flat reserve — then the selling concession below that.",
+        what: "The bridge from a model mid to a price a desk could actually trade. Five costs: skew, overhedge, correlation bid-ask, vega bid-ask, and a flat reserve — then the selling concession below that. If local vol is on, skew is skipped so the smile is not charged twice.",
         moves: "Every charge lowers the offer. Skew is normally the largest on an income note, because a flat-volatility model badly underprices a deep out-of-the-money put. Correlation only bites when there is a basket.",
         watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated.")
 }

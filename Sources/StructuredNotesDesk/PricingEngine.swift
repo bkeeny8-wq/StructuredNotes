@@ -10,7 +10,10 @@
 //  final valuation can average daily fixings over the last week or month.
 //  Issuer call is a small Longstaff–Schwartz step (basis 1, z, z², knocked):
 //  the bank redeems when fitted continuation exceeds par + premium. Teaching
-//  cartoon of optimal exercise, not a desk LSMC.
+//  cartoon of optimal exercise, not a desk LSMC. Default paths are flat vol
+//  per name; an optional one-parameter leverage function (σ rises as the
+//  name trades down) puts a smile in the paths so barriers can see it
+//  without going through the skew charge. Not a calibrated Dupire surface.
 
 import Foundation
 import Dispatch
@@ -165,6 +168,31 @@ public enum Engine {
             if draw(0) < pHit { return true }
         }
         return false
+    }
+
+    /// Instantaneous vol for the teaching leverage function.
+    /// σ(x) = σ_ATM + slope × max(1−x, 0) × 10, floored at 1 vol pt.
+    /// Same units as the skew charge. Spot at or above 1 is ATM; a desk
+    /// Dupire surface is calibrated to listed options and is time-dependent.
+    public static func leverageVol(atm: Double, spot: Double, slope: Double) -> Double {
+        let extra = slope * max(1 - spot, 0) * 10
+        return max(0.01, min(atm + extra, 1.50))
+    }
+
+    /// Period variance of a weighted basket from per-name var×dt.
+    static func basketVarFromVarDt(_ varDt: [Double], offset: Int, nA: Int,
+                                   weights: [Double], rho: Double) -> Double {
+        var num = 0.0, den = 0.0
+        for i in 0..<nA {
+            let wi = max(weights[i], 1e-6); den += wi
+            for j in 0..<nA {
+                let wj = max(weights[j], 1e-6)
+                let cov = (i == j ? 1.0 : rho) * (varDt[offset + i] * varDt[offset + j]).squareRoot()
+                num += wi * wj * cov
+            }
+        }
+        let d = max(den, 1e-12)
+        return num / (d * d)
     }
 
     static func cholesky(rho: Double, n: Int) -> [[Double]] {
@@ -450,15 +478,17 @@ public enum Engine {
         let cpnBridge = dailyBarrier
         let watchBridge = kiBridge || cpnBridge
         let worstOf = s.basket == .worstOf || nA == 1
+        let localOn = s.localVolOn
+        let lvSlope = s.localVolSlope
+        let rhoUse = min(0.99, max(-0.45, s.correlation))
         var basketVol = 0.0
-        if watchBridge && nA > 1 && s.basket == .weighted {
+        if watchBridge && nA > 1 && s.basket == .weighted && !localOn {
             var num = 0.0, den = 0.0
-            let rho = min(0.99, max(-0.45, s.correlation))
             for i in 0..<nA {
                 let wi = max(s.weights[i], 1e-6); den += wi
                 for j in 0..<nA {
                     let wj = max(s.weights[j], 1e-6)
-                    num += wi * wj * vols[i] * vols[j] * (i == j ? 1 : rho)
+                    num += wi * wj * vols[i] * vols[j] * (i == j ? 1 : rhoUse)
                 }
             }
             basketVol = num.squareRoot() / den
@@ -533,6 +563,9 @@ public enum Engine {
                 var x = [Double](repeating: 1, count: nA)
                 var xPrev = [Double](repeating: 1, count: nA)
                 var acc = [Double](repeating: 0, count: nA)
+                var varDtNow = [Double](repeating: 0, count: nA)
+                var subVarDt = [Double](repeating: 0, count: 21 * nA)
+                var vdtSubNow = [Double](repeating: 0, count: nA)
                 let lo = paths * chunk / chunkCount
                 let hi = paths * (chunk + 1) / chunkCount
                 for pth in lo..<hi {
@@ -563,7 +596,14 @@ public enum Engine {
                         for j in 0..<nA {
                             var e = 0.0
                             for k in 0...j { e += L[j][k] * z[slot + k] }
-                            x[j] *= exp(fwdSub - qvSub[j] + volSqdtSub[j] * e)
+                            if localOn {
+                                let v = leverageVol(atm: vols[j], spot: x[j], slope: lvSlope)
+                                let v2 = v * v
+                                x[j] *= exp(fwdSub - (divsArr[j] + v2 / 2) * dtSub + v * sqdtSub * e)
+                                subVarDt[sub * nA + j] = v2 * dtSub
+                            } else {
+                                x[j] *= exp(fwdSub - qvSub[j] + volSqdtSub[j] * e)
+                            }
                             closes[sub * nA + j] = x[j]
                         }
                     }
@@ -572,7 +612,14 @@ public enum Engine {
                     for j in 0..<nA {
                         var e = 0.0
                         for k in 0...j { e += L[j][k] * z[slot + k] }
-                        x[j] *= exp(fwdDt[i] - qv[j] + volSqdt[j] * e)
+                        if localOn {
+                            let v = leverageVol(atm: vols[j], spot: x[j], slope: lvSlope)
+                            let v2 = v * v
+                            x[j] *= exp(fwdDt[i] - (divsArr[j] + v2 / 2) * dt + v * sqdt * e)
+                            varDtNow[j] = v2 * dt
+                        } else {
+                            x[j] *= exp(fwdDt[i] - qv[j] + volSqdt[j] * e)
+                        }
                     }
                 }
 
@@ -588,10 +635,18 @@ public enum Engine {
                             let zDay = perf(day, s)
                             if watchKI && zDay < s.protection { knocked = true }
                             let u0 = base + (nSteps - 1 + sub) * nA
+                            if localOn {
+                                for j in 0..<nA { vdtSubNow[j] = subVarDt[sub * nA + j] }
+                            }
+                            let vdtSubUse = localOn ? vdtSubNow : varDtSub
+                            let bvarSub = (localOn && nA > 1 && s.basket == .weighted)
+                                ? basketVarFromVarDt(subVarDt, offset: sub * nA, nA: nA,
+                                                     weights: s.weights, rho: rhoUse)
+                                : basketVol * basketVol * dtSub
                             if watchKI && kiBridge && !knocked {
                                 if brownianHit(barrier: s.protection, prevX: prevX, nowX: day,
                                                zPrev: prevZ, zNow: zDay, nA: nA, worstOf: worstOf,
-                                               varDt: varDtSub, basketVarDt: basketVol * basketVol * dtSub,
+                                               varDt: vdtSubUse, basketVarDt: bvarSub,
                                                u: u, u0: u0, flipU: false) {
                                     knocked = true
                                 }
@@ -601,7 +656,7 @@ public enum Engine {
                                     periodClean = false
                                 } else if brownianHit(barrier: s.couponBarrier, prevX: prevX, nowX: day,
                                                       zPrev: prevZ, zNow: zDay, nA: nA, worstOf: worstOf,
-                                                      varDt: varDtSub, basketVarDt: basketVol * basketVol * dtSub,
+                                                      varDt: vdtSubUse, basketVarDt: bvarSub,
                                                       u: u, u0: u0, flipU: true) {
                                     periodClean = false
                                 }
@@ -630,10 +685,15 @@ public enum Engine {
                 } else {
                     if isProtDate && zNow < s.protection { knocked = true }
                     let u0 = base + (i - 1) * nA
+                    let vdtUse = localOn ? varDtNow : varDt
+                    let bvarUse = (localOn && nA > 1 && s.basket == .weighted)
+                        ? basketVarFromVarDt(varDtNow, offset: 0, nA: nA,
+                                             weights: s.weights, rho: rhoUse)
+                        : basketVol * basketVol * dt
                     if kiBridge && !knocked {
                         if brownianHit(barrier: s.protection, prevX: xPrev, nowX: x,
                                        zPrev: zPrev, zNow: zNow, nA: nA, worstOf: worstOf,
-                                       varDt: varDt, basketVarDt: basketVol * basketVol * dt,
+                                       varDt: vdtUse, basketVarDt: bvarUse,
                                        u: u, u0: u0, flipU: false) {
                             knocked = true
                         }
@@ -643,7 +703,7 @@ public enum Engine {
                             periodClean = false
                         } else if brownianHit(barrier: s.couponBarrier, prevX: xPrev, nowX: x,
                                               zPrev: zPrev, zNow: zNow, nA: nA, worstOf: worstOf,
-                                              varDt: varDt, basketVarDt: basketVol * basketVol * dt,
+                                              varDt: vdtUse, basketVarDt: bvarUse,
                                               u: u, u0: u0, flipU: true) {
                             periodClean = false
                         }
@@ -882,7 +942,9 @@ public enum Engine {
         }
         let baseF = simulate(s, paths: fastPaths)
         var skew = 0.0
-        if s.downside != .par {
+        // Local vol already puts the smile in the paths; charging skew on top
+        // would double-count. Flat-vol mids still use the strike-vol charge.
+        if s.downside != .par && !s.localVolOn {
             let extra = s.skewSlope * (1 - s.protection) * 10
             let wing = simulate(s, volBump: extra, paths: fastPaths)
             skew = max(wing.lossPV - baseF.lossPV, 0)

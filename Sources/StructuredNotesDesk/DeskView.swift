@@ -141,8 +141,13 @@ public struct DeskView: View {
                   toggle: { mutate { $0.chargesOn.toggle() } },
                   offHint: "Off — quoting model mid. Toggle for the dealer offer.",
                   help: Teach.blockHelp("charges")) {
-            LeverRow(label: "Skew (vol pts per 10% moneyness)",
-                     value: $spec.skewSlope, range: 0...0.025, step: 0.0025, field: .volV)
+            if spec.localVolOn {
+                Text("Skew charge is off while local vol is on — the smile is already in the paths. Turn local vol off to go back to a flat-vol mid plus this charge.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            } else {
+                LeverRow(label: "Skew (vol pts per 10% moneyness)",
+                         value: $spec.skewSlope, range: 0...0.025, step: 0.0025, field: .volV)
+            }
             LeverRow(label: "Overhedge barrier shift",
                      value: $spec.barrierShift, range: 0...0.03, step: 0.0025, field: .pct)
             LeverRow(label: "Correlation bid-ask (±ρ)",
@@ -153,7 +158,9 @@ public struct DeskView: View {
                      value: $spec.reserveBps, range: 0...50, step: 5, field: .bps)
             LeverRow(label: "UF — advisor + wholesaler (of principal)",
                      value: $spec.ufFee, range: 0...0.05, step: 0.0025, field: .pct)
-            Text("Flat-vol Monte Carlo is a mid. These are the desk's costs of being wrong: the KI wing, unreplicable digitals, unhedgeable correlation.")
+            Text(spec.localVolOn
+                 ? "Local-vol Monte Carlo is still a mid. Remaining charges are the desk's costs of being wrong on things the leverage function does not fix: unreplicable digitals, unhedgeable correlation."
+                 : "Flat-vol Monte Carlo is a mid. These are the desk's costs of being wrong: the KI wing, unreplicable digitals, unhedgeable correlation.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
@@ -212,6 +219,15 @@ public struct DeskView: View {
             }
             LeverRow(label: "Vol shift (all names)",
                      value: $spec.volShift, range: -0.10...0.15, step: 0.01, field: .volPts)
+            ChipToggle(label: "Local vol (downside leverage)", on: spec.localVolOn) {
+                mutate { $0.localVolOn.toggle() }
+            }
+            if spec.localVolOn {
+                LeverRow(label: "Smile slope (vol pts per 10% below spot)",
+                         value: $spec.localVolSlope, range: 0...0.025, step: 0.0025, field: .volV)
+                Text("σ(x) = σ_ATM + slope × max(1−x, 0) × 10. Puts and barriers see a smile in the paths. A desk Dupire surface is calibrated to listed options and is time-dependent; this is a one-parameter cartoon. Default is off, so the lessons still run on flat vol. The skew charge is zero while this is on.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
+            }
         }
     }
 
@@ -798,8 +814,8 @@ public struct DeskView: View {
     private static let assumptionRows: [(String, String)] = [
         ("Simulation, not a formula",
          "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise."),
-        ("One flat volatility per name — the biggest simplification",
-         "The model prices every option on a name at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits. That is why the mid is not the offer: the skew charge in the charge stack is the correction, and on income notes it is usually the largest single line."),
+        ("One flat volatility per name — unless you turn local vol on",
+         "Default: every option on a name is priced at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits — that is the skew charge. The optional local-vol toggle puts a one-parameter leverage function in the paths (σ rises as the name trades down). A desk Dupire surface is calibrated to listed options and is time-dependent; this is a cartoon so a barrier can see a smile instead of only a charge."),
         ("Correlation is a single number",
          "One pairwise correlation is applied across the whole basket, and it does not change with the market. In practice correlation rises sharply in sell-offs, which makes worst-of baskets behave worse than modelled precisely when it matters most."),
         ("The issuer call is a small Longstaff–Schwartz",
@@ -809,7 +825,7 @@ public struct DeskView: View {
         ("Prices come from a stored snapshot",
          "Levels, dividends and volatilities are a saved snapshot, not a live feed, and volatilities for most names are documented estimates rather than listed implieds. Directions and magnitudes are reliable; the last decimal is not."),
         ("Lognormal paths",
-         "Returns are assumed lognormal with constant volatility. Real markets gap, and gaps hurt barrier structures more than smooth diffusion does — which is part of what the model reserve in the charge stack is paying for."),
+         "Default returns are lognormal with constant volatility. Local vol makes σ a function of the level — still no jumps. Real markets gap, and gaps hurt barrier structures more than smooth diffusion does, which is part of what the model reserve in the charge stack is paying for."),
     ]
 
     // MARK: advisor education
@@ -1169,7 +1185,7 @@ public struct DeskView: View {
     private var offerCard: some View {
         if spec.chargesOn, let r = result {
             Card(title: "Dealer offer build-up", help: Teach.blockHelp("offer")) {
-                LegRow(label: "Model mid (flat vol)", value: Fmt.pct(r.value, 2))
+                LegRow(label: spec.localVolOn ? "Model mid (local vol)" : "Model mid (flat vol)", value: Fmt.pct(r.value, 2))
                 if let ch = charges {
                     if ch.skew > 0.0002 { LegRow(label: "− skew: downside leg at strike vol", value: "−" + Fmt.pct(ch.skew, 2), color: Theme.loss) }
                     if ch.overhedge > 0.0002 { LegRow(label: "− overhedge: barriers shifted \(Fmt.pct(spec.barrierShift))", value: "−" + Fmt.pct(ch.overhedge, 2), color: Theme.loss) }
@@ -1203,6 +1219,9 @@ public struct DeskView: View {
         let names = spec.members.joined(separator: "/")
         var parts = ["\(names)\(spec.members.count > 1 ? " (\(spec.basket.rawValue.lowercased()))" : ""), \(termStr(spec.termYears))"]
         if spec.averaging != .none { parts.append("\(spec.averaging.fixings)-fixing Asian tail") }
+        if spec.localVolOn {
+            parts.append("local vol \(String(format: "%.1f", spec.localVolSlope * 100))v/10% down")
+        }
         if spec.coupon != .none {
             if spec.snowball {
                 var cpn = "snowball \(Fmt.pct(spec.snowballRate))"
