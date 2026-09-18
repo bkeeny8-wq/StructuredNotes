@@ -32,16 +32,15 @@ public enum CouponStyle: String, CaseIterable, Identifiable, Hashable, Sendable 
     public var id: String { rawValue }
 }
 
-/// Coupon observation schedule. Daily accrues on every simulation step
-/// (grid-frequency approximation of daily). European pays once at maturity.
+/// Coupon observation schedule. Dates are calendar month-ends from issue
+/// (quarterly = 3, 6, 9, … months). An incomplete leftover stub at maturity
+/// does not pay. European pays the full rate × tenor once at maturity.
 public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable {
-    case daily = "Daily accrual"
     case monthly = "Monthly", quarterly = "Quarterly", semiannual = "Semi-annual", annual = "Annual"
     case european = "European (at maturity)"
     public var id: String { rawValue }
     public var perYear: Int {
         switch self {
-        case .daily: return 12          // accrues on the grid; documented approximation
         case .monthly: return 12
         case .quarterly: return 4
         case .semiannual: return 2
@@ -49,14 +48,16 @@ public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .european: return 0
         }
     }
+    /// Months between coupon dates on the calendar schedule. 0 = European.
+    public var monthsPerPeriod: Int { perYear > 0 ? 12 / perYear : 0 }
 }
 
-/// Contingent-coupon barrier observation: standard payment-date check, or
-/// daily monitoring where any breach during the period kills that coupon
-/// (approximated at the simulation grid).
+/// Contingent-coupon barrier observation: payment-date close only, or any
+/// monthly grid close during the coupon period. This is not a Brownian-bridge
+/// one-touch — KI daily monitoring is the setting that interpolates between closes.
 public enum BarrierObsStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
     case onPaymentDate = "On payment date"
-    case dailyMonitored = "Daily (approx.)"
+    case dailyMonitored = "Any monthly close"
     public var id: String { rawValue }
 }
 
@@ -71,6 +72,7 @@ public enum CallObs: String, CaseIterable, Identifiable, Hashable, Sendable {
         case .annual: return 1
         }
     }
+    public var monthsPerPeriod: Int { 12 / perYear }
 }
 
 public enum CallFeature: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -93,6 +95,7 @@ public enum ProtectionObs: String, CaseIterable, Identifiable, Hashable, Sendabl
         default: return 12
         }
     }
+    public var monthsPerPeriod: Int { perYear > 0 ? 12 / perYear : 0 }
 }
 
 public enum DownsideKind: String, CaseIterable, Identifiable, Hashable, Sendable {
@@ -243,4 +246,14 @@ extension Instrument {
         spreadShort: 0.004, spreadLong: 0.006, volShift: 0,
         chargesOn: true, skewSlope: 0.010, barrierShift: 0.01,
         corrBA: 0.03, volBA: 0.005, reserveBps: 10, ufFee: 0.025)
+
+    /// Builder invariants: drop features the UI hides so a live lever cannot
+    /// keep pricing after its control disappears.
+    public mutating func applyBuilderRules() {
+        if members.isEmpty { members = ["SPX"] }
+        if coupon == .none { memory = false; snowball = false }
+        if call == .none { snowball = false; lockIn = false }
+        if snowball { memory = false }
+        if couponObs == .european { memory = false }
+    }
 }

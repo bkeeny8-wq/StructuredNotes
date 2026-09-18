@@ -5,12 +5,14 @@
 //  value per $1 of par. Funding-rate discounting; risk-neutral GBM with a
 //  fixed normal array (common random numbers), so leg arithmetic printed in
 //  the work-through ties exactly. Coupon and call run on independent
-//  schedules; protection has its own observation with a sticky knock-in; the
+//  schedules (calendar month-ends from issue; leftover stub months do not
+//  pay); protection has its own observation with a sticky knock-in; the
 //  final valuation can average daily fixings over the last week or month.
 //  Issuer call is rule-based — investor value shown is an upper bound
 //  (optimal LSMC exercise is worth less to the holder).
 
 import Foundation
+import Dispatch
 
 public struct CallBucket: Equatable, Identifiable, Sendable {
     public var id: Double { t }
@@ -240,22 +242,22 @@ public enum Engine {
 
         let couponActive = s.coupon != .none
         let callActive = s.call != .none
-        let cpnPerYear = s.couponObs.perYear                 // daily→12 (grid proxy), european→0
-        let callPerYear = callActive ? s.callObs.perYear : 0
-        let protPerYear = s.protObs.perYear
+        let cpnPerYear = s.couponObs.perYear                 // european→0
         let fixings = s.averaging.fixings
         let dailyBarrier = s.coupon == .contingent && s.couponBarrierObs == .dailyMonitored
-            && s.couponObs != .daily && s.couponObs != .european
-        let stepsPerYear = max(couponActive ? cpnPerYear : 0, callPerYear, protPerYear,
-                               fixings > 0 ? 12 : 0, dailyBarrier ? 12 : 0, 1)
-        let nSteps = max(1, Int((s.termYears * Double(stepsPerYear)).rounded()))
+            && s.couponObs != .european
+        // Month-end calendar from issue: one step per month so coupon/call/KI
+        // dates land on 3m/6m/… rather than equal-spaced fractions of tenor.
+        // Incomplete leftover months are not a coupon date (no stub cash).
+        let termMonths = max(1, Int((s.termYears * 12.0).rounded()))
+        let cpnMonths = s.couponObs.monthsPerPeriod
+        let callMonths = callActive ? s.callObs.monthsPerPeriod : 0
+        let protMonths = s.protObs.monthsPerPeriod
+        let nSteps = termMonths
         let dt = s.termYears / Double(nSteps)
         let sqdt = dt.squareRoot()
-        let couponEvery = (couponActive && cpnPerYear > 0) ? max(1, stepsPerYear / cpnPerYear) : nSteps + 1
-        let callEvery = callPerYear > 0 ? max(1, stepsPerYear / callPerYear) : nSteps + 1
-        let protEvery = protPerYear > 0 ? max(1, stepsPerYear / protPerYear) : nSteps + 1
-        let perEventAmt = s.couponObs == .daily ? c * dt : (cpnPerYear > 0 ? c / Double(cpnPerYear) : 0)
-        let perEventQ = s.couponObs == .daily ? dt : (cpnPerYear > 0 ? 1.0 / Double(cpnPerYear) : 0)
+        let perEventAmt = cpnPerYear > 0 ? c / Double(cpnPerYear) : 0
+        let perEventQ = cpnPerYear > 0 ? 1.0 / Double(cpnPerYear) : 0
         let nSubs = fixings > 0 ? 21 : 0
         let dtSub = nSubs > 0 ? dt / Double(nSubs) : 0
         let sqdtSub = dtSub > 0 ? dtSub.squareRoot() : 0
@@ -368,9 +370,9 @@ public enum Engine {
                     zNow = perf(acc, s)
                 }
 
-                let isCouponDate = couponActive && (i % couponEvery == 0)
+                let isCouponDate = couponActive && cpnMonths > 0 && (i % cpnMonths == 0)
                 let isProtDate = s.downside == .kiPut &&
-                    (s.protObs == .european ? isFinal : (i % protEvery == 0 || isFinal))
+                    (s.protObs == .european ? isFinal : (protMonths == 0 ? isFinal : (i % protMonths == 0 || isFinal)))
                 let df = dfArr[i]
 
                 if isProtDate && zNow < s.protection { knocked = true }
@@ -391,8 +393,8 @@ public enum Engine {
                 if bridge { for j in 0..<nA { xPrev[j] = x[j] }; zPrev = zNow }
                 if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
                 if s.lockIn && zNow >= s.lockLevel {
-                    let lockObs = (callActive && i % callEvery == 0)
-                        || (couponActive && i % couponEvery == 0)
+                    let lockObs = (callActive && callMonths > 0 && i % callMonths == 0)
+                        || (couponActive && cpnMonths > 0 && i % cpnMonths == 0)
                         || (!callActive && !couponActive) || isFinal
                     if lockObs { locked = true }
                 }
@@ -403,7 +405,7 @@ public enum Engine {
                     if s.coupon == .guaranteed {
                         cpv += perEventAmt * df; qacc += perEventQ * df; out.coupons += 1
                     } else if condition {
-                        let canMemory = s.memory && s.couponObs != .daily && s.couponObs != .european
+                        let canMemory = s.memory && s.couponObs != .european
                         let n = 1 + (canMemory ? missed : 0)
                         cpv += Double(n) * perEventAmt * df
                         qacc += Double(n) * perEventQ * df
@@ -416,7 +418,7 @@ public enum Engine {
                     if pays { cpv += c * s.termYears * df; qacc += s.termYears * df; out.coupons += 1 }
                 }
 
-                if !isFinal, callActive, i % callEvery == 0, t >= s.nonCallYears - 1e-9 {
+                if !isFinal, callActive, callMonths > 0, i % callMonths == 0, t >= s.nonCallYears - 1e-9 {
                     let trig = s.callTrigger - s.triggerStep * max(0, t - s.nonCallYears)
                     if zNow >= trig {
                         parpv += df
@@ -712,7 +714,7 @@ public enum Engine {
             }
         }
         if s.coupon == .contingent && s.couponBarrierObs == .dailyMonitored {
-            add("+ daily-observed barrier") { $0.couponBarrierObs = .dailyMonitored }
+            add("+ monthly-close barrier (grid, not a bridge)") { $0.couponBarrierObs = .dailyMonitored }
         }
         if s.memory {
             add("+ memory") { $0.memory = true }

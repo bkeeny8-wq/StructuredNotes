@@ -83,7 +83,7 @@ public enum Teach {
         case "coupon":
             return BlockHelp(
                 what: "The income leg. Guaranteed coupons pay in every scenario. Contingent coupons pay only when the underlying is at or above the coupon barrier on the observation date.",
-                moves: "Value rises one-for-one with the coupon rate against the annuity factor Q shown on the math tab. Anything that makes coupons harder to earn — a higher barrier, daily observation, a call that ends the note early — lowers value at the same headline rate.",
+                moves: "Value rises one-for-one with the coupon rate against the annuity factor Q shown on the math tab. Anything that makes coupons harder to earn — a higher barrier, more frequent observations, a call that ends the note early — lowers value at the same headline rate.",
                 watch: "Set a coupon with everything else off and watch value climb above par. No issuer can sell that. Something has to be sold to pay for it, which is what the downside block does.")
         case "call":
             return BlockHelp(
@@ -102,7 +102,7 @@ public enum Teach {
                 watch: "Compare a 60% knock-in with a 60% buffer at the same coupon. The knock-in is worth much more to the issuer, because the buffer erodes gradually while the knock-in falls off a cliff.")
         case "protectionObs":
             return BlockHelp(
-                what: "How the barrier is watched. European looks once, at maturity. Monitored looks on a schedule and the breach sticks forever. Daily uses a Brownian bridge, which also counts touches that happen between closes.",
+                what: "How the barrier is watched. European looks once, at maturity. Monitored looks on a schedule and the breach sticks forever. Daily adds a Brownian-bridge correction between monthly closes — not a 252-day fixings grid.",
                 moves: "The more often you look, the more often the barrier breaks, so the put you sold is worth more and the note is worth less at the same coupon.",
                 watch: "Hold the barrier at 60% and step through European, monthly, and daily. Three different prices for the same headline number — this is the single most under-read line on a term sheet.")
         case "rates":
@@ -246,7 +246,7 @@ public enum Teach {
                                   why: "Coupons now pay only when the underlying clears the barrier on an observation date. You have sold the issuer a ladder of digital options, one per date, and the money you gave up is what funds the higher headline rate.")
             }
         }
-        if moved(a.couponRate, b.couponRate) {
+        if moved(a.couponRate, b.couponRate), !b.snowball {
             return ChangeNote(
                 label: "Coupon rate \(p(a.couponRate, 2)) → \(p(b.couponRate, 2))",
                 why: "This is the one lever that moves value in a straight line. Value changes by the rate change times the annuity factor Q on the math tab, and nothing else. If you want to know what a feature is worth, price it and then solve for the coupon change that offsets it.")
@@ -266,10 +266,10 @@ public enum Teach {
         }
         if a.couponBarrierObs != b.couponBarrierObs {
             return b.couponBarrierObs == .dailyMonitored
-                ? ChangeNote(label: "Coupon barrier → daily observed",
-                             why: "A single touch below the barrier at any point in the period now kills that coupon, instead of only the closing level on the payment date mattering. That is a much harder test, so the same headline rate is worth materially less to you.")
+                ? ChangeNote(label: "Coupon barrier → any monthly close in the period",
+                             why: "A monthly close below the barrier at any point in the coupon period now kills that coupon, instead of only the payment-date close mattering. This is the monthly simulation grid, not a Brownian-bridge one-touch (that's the KI daily setting). The same headline rate is worth less to you.")
                 : ChangeNote(label: "Coupon barrier → payment-date observed",
-                             why: "Only the level on the payment date matters now. Intra-period dips are forgiven, so coupons are far easier to earn.")
+                             why: "Only the level on the payment date matters now. Intra-period monthly closes are forgiven, so coupons are easier to earn.")
         }
         if a.memory != b.memory {
             return b.memory
@@ -687,13 +687,13 @@ public enum Teach {
               desk: "A strip of digital options, one per observation. Pin risk on every date."),
         .init(name: "Coupon barrier",
               plain: "The level the underlying must hold for a contingent coupon to be paid.",
-              desk: "The digital strike. Its observation style — payment date or daily — changes the price materially."),
+              desk: "The digital strike. Payment-date vs any-monthly-close observation changes the price; this is not the KI Brownian-bridge setting."),
         .init(name: "Memory",
               plain: "Missed coupons are remembered and paid later, on the first observation that clears the barrier.",
               desk: "Chains the digitals together instead of leaving them independent. Harder to hedge, worth more to the client."),
         .init(name: "Q (annuity factor)",
               plain: "The note's own discounted count of coupon payments. Multiply the coupon rate by Q to get the value of the whole income leg.",
-              desk: "Q = E[Σ df at paid dates]. Because the model uses common random numbers, coupon leg = c × Q exactly."),
+              desk: "Q = E[Σ year-fraction × df at paid dates]. Because the model uses common random numbers, coupon leg = c × Q exactly."),
         .init(name: "Autocall",
               plain: "The note redeems early and automatically when the underlying is at or above the trigger on an observation date.",
               desk: "You are short the good scenarios. Negative gamma sits just under the trigger into each observation."),
@@ -785,7 +785,7 @@ public enum Teach {
             let label = s.snowball ? "Accrued Coupon Rate" : (s.coupon == .contingent ? "Contingent Coupon Rate" : "Fixed Coupon Rate")
             rows.append((label, "\(p(s.snowball ? s.snowballRate : s.couponRate)) per annum, paid \(s.snowball ? "on the call date" : s.couponObs.rawValue.lowercased())"))
             if s.coupon == .contingent {
-                rows.append(("Coupon Barrier", "\(p(s.couponBarrier, 0)) of Initial Level\(s.couponBarrierObs == .dailyMonitored ? ", observed daily" : ", observed on each Coupon Observation Date")"))
+                rows.append(("Coupon Barrier", "\(p(s.couponBarrier, 0)) of Initial Level\(s.couponBarrierObs == .dailyMonitored ? ", observed on each monthly close during the coupon period" : ", observed on each Coupon Observation Date")"))
             }
             if s.memory { rows.append(("Memory Feature", "Applicable — unpaid coupons are carried forward")) }
         }

@@ -192,33 +192,33 @@ public struct DeskView: View {
                 }
             }
             Group {
-                LeverRow(label: "Coupon rate",
-                         value: $spec.couponRate, range: 0...0.25, step: 0.001, field: .pct)
+                if !spec.snowball {
+                    LeverRow(label: "Coupon rate",
+                             value: $spec.couponRate, range: 0...0.25, step: 0.001, field: .pct)
+                }
                 Picker("Coupon observations", selection: $spec.couponObs) {
                     ForEach(CouponObs.allCases) { o in Text(o.rawValue).tag(o) }
                 }
                 .pickerStyle(.menu).tint(Theme.ink)
                 .onChange(of: spec.couponObs) { _, o in
-                    if o == .daily || o == .european { mutate { $0.memory = false } }
+                    if o == .european { mutate { $0.memory = false } }
                 }
+                Text("Paid on calendar month-ends from issue (quarterly = 3, 6, 9, … months). Leftover months shorter than one period do not pay a stub.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
                 if spec.coupon == .contingent {
                     LeverRow(label: "Coupon barrier",
                              value: $spec.couponBarrier, range: 0.4...1.0, step: 0.01, field: .pct0)
-                    if spec.couponObs != .daily && spec.couponObs != .european {
+                    if spec.couponObs != .european {
                         ChoiceChips(options: BarrierObsStyle.allCases.map { ($0, "Obs: " + $0.rawValue.lowercased()) },
                                     selection: spec.couponBarrierObs) { k in mutate { $0.couponBarrierObs = k } }
                         if spec.couponBarrierObs == .dailyMonitored {
-                            Text("Any breach during the period kills that coupon — approximated at the simulation grid.")
+                            Text("Any monthly close below the barrier during the coupon period kills that coupon. This is the monthly grid, not a Brownian-bridge one-touch — KI daily monitoring is the setting that interpolates between closes.")
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                         }
                     }
-                    if spec.couponObs != .daily && spec.couponObs != .european && !spec.snowball {
+                    if spec.couponObs != .european && !spec.snowball {
                         ChipToggle(label: "Memory", on: spec.memory) { mutate { $0.memory.toggle() } }
                     }
-                }
-                if spec.couponObs == .daily {
-                    Text("Daily accrual is approximated at the simulation grid.")
-                        .font(.system(size: 10)).foregroundStyle(.secondary)
                 }
             }
         }
@@ -532,9 +532,7 @@ public struct DeskView: View {
             let n = Double(s.members.count)
             for j in 0..<s.weights.count { s.weights[j] = 1.0 / n }
         }
-        if s.coupon == .none { s.memory = false; s.snowball = false }
-        if s.call == .none { s.snowball = false }
-        if s.snowball { s.memory = false }
+        s.applyBuilderRules()
         spec = s
     }
 
@@ -592,7 +590,7 @@ public struct DeskView: View {
         case .monthly:
             return "Checked every month — twelve times the chances to break versus a single European look."
         case .daily:
-            return "Every day, including touches between closes (Brownian bridge). The strictest way to watch the same level."
+            return "Monthly closes plus a Brownian-bridge correction for touches between them — stricter than monthly monitoring, not a true 252-day fixings grid."
         }
     }
 
@@ -990,12 +988,18 @@ public struct DeskView: View {
         var parts = ["\(names)\(spec.members.count > 1 ? " (\(spec.basket.rawValue.lowercased()))" : ""), \(termStr(spec.termYears))"]
         if spec.averaging != .none { parts.append("\(spec.averaging.fixings)-fixing Asian tail") }
         if spec.coupon != .none {
-            var cpn = "\(Fmt.pct(spec.couponRate)) \(spec.coupon == .guaranteed ? "guaranteed" : "contingent @ \(Fmt.pct(spec.couponBarrier, 0))")"
-            cpn += " (\(spec.couponObs.rawValue.lowercased()))"
-            if spec.memory { cpn += " memory" }
-            if spec.snowball { cpn += ", snowball \(Fmt.pct(spec.snowballRate))" }
-            if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", daily-obs" }
-            parts.append(cpn)
+            if spec.snowball {
+                var cpn = "snowball \(Fmt.pct(spec.snowballRate))"
+                if spec.coupon == .contingent { cpn += " contingent @ \(Fmt.pct(spec.couponBarrier, 0))" }
+                if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", monthly-close obs" }
+                parts.append(cpn)
+            } else {
+                var cpn = "\(Fmt.pct(spec.couponRate)) \(spec.coupon == .guaranteed ? "guaranteed" : "contingent @ \(Fmt.pct(spec.couponBarrier, 0))")"
+                cpn += " (\(spec.couponObs.rawValue.lowercased()))"
+                if spec.memory { cpn += " memory" }
+                if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", monthly-close obs" }
+                parts.append(cpn)
+            }
         }
         if spec.call != .none {
             var call = "\(spec.call == .autocall ? "autocall" : "issuer call") \(Fmt.pct(spec.callTrigger, 0)) (\(spec.callObs.rawValue.lowercased()))"
@@ -1162,9 +1166,14 @@ public struct DeskView: View {
 
         if spec.coupon != .none {
             let rate = spec.snowball ? spec.snowballRate : spec.couponRate
+            let cName = spec.snowball ? "r_sb" : "c"
+            let rateDec = String(format: "%.4f", rate)
+            let qStr = String(format: "%.3f", r.qFactor)
+            let legDec = String(format: "%.4f", r.couponLeg)
             add("The income leg — the coupon rate times Q",
-                ["Q = E[Σ df at dates actually paid] = \(String(format: "%.3f", r.qFactor))",
-                 "coupon leg = \(spec.snowball ? "r_sb" : "c") × Q = \(Fmt.pct(rate)) × \(String(format: "%.3f", r.qFactor)) = \(Fmt.usd0(r.couponLeg * notional))",
+                ["Q = E[Σ year-fraction × df at dates actually paid] = \(qStr)",
+                 "\(cName) = \(rateDec) (\(Fmt.pct(rate, 2)) p.a.)",
+                 "coupon leg = \(cName) × Q = \(rateDec) × \(qStr) = \(legDec) = \(Fmt.pct(r.couponLeg, 2)) of par = \(Fmt.usd0(r.couponLeg * notional)) per $1,000",
                  "coupons expected: \(String(format: "%.1f", r.avgCoupons))"],
                 "Q is the note's own discounted count of coupons that actually get paid — not the number of dates on the schedule, but what survives after barriers and early calls take their toll. Multiply the headline rate by Q and you have the whole income leg, exactly. If you learn one number from this app, learn Q: comparing two income notes means comparing rate times Q, not rate.")
         }
@@ -1178,8 +1187,9 @@ public struct DeskView: View {
         if spec.upside != .none {
             if (spec.upside == .linear || spec.upside == .absolute), r.upUnit > 1e-9 {
                 add("The upside leg — one unit at a time",
-                    ["U = E[df × gain] / participation = \(String(format: "%.4f", r.upUnit))",
-                     "upside leg = participation × U = \(Fmt.pct(spec.participation, 0)) × \(String(format: "%.4f", r.upUnit)) = \(Fmt.usd0(r.upsideLeg * notional))"],
+                    ["U = \(String(format: "%.4f", r.upUnit))",
+                     "participation = \(String(format: "%.2f", spec.participation)) (\(Fmt.pct(spec.participation, 0)))",
+                     "upside leg = participation × U = \(String(format: "%.2f", spec.participation)) × \(String(format: "%.4f", r.upUnit)) = \(String(format: "%.4f", r.upsideLeg)) = \(Fmt.pct(r.upsideLeg, 2)) of par = \(Fmt.usd0(r.upsideLeg * notional)) per $1,000"],
                     "U is what a single unit of participation is worth. Because the payoff is linear in participation, doubling participation exactly doubles this leg — so you can read a fair participation straight off U instead of guessing and re-pricing.")
             } else {
                 add("The upside leg",
@@ -1453,7 +1463,7 @@ public struct DeskView: View {
             out.append("Long the \(spec.gearedBuffer ? "geared " : "")buffer put struck \(Fmt.pct(spec.protection, 0))\(spec.gearedBuffer ? " — full downside reachable" : "").")
         }
         if spec.coupon == .contingent {
-            out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", one-touch observed" : "") — pin risk every observation date.")
+            out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", any monthly close in the period" : "") — pin risk every observation date.")
         }
         if spec.call != .none {
             let prem = spec.callPremium > 0 ? " The \(Fmt.pct(spec.callPremium))/yr call premium enlarges the trigger digital." : ""
