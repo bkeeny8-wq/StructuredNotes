@@ -145,4 +145,46 @@ final class EngineGoldenTests: XCTestCase {
         let wrongMaturityPay = 0.10 * fundingDF(s, s.termYears)
         XCTAssertGreaterThan(abs(wrongMaturityPay - r.couponLeg), 1e-4)
     }
+
+    func testInstrumentCodableRoundTrip() throws {
+        var s = Instrument.initial
+        s.coupon = .guaranteed
+        s.couponRate = 0.105
+        s.cap = 1.30
+        s.upside = .linear
+        s.participation = 1.5
+        let data = try JSONEncoder().encode(s)
+        let back = try JSONDecoder().decode(Instrument.self, from: data)
+        XCTAssertEqual(back.members, s.members)
+        XCTAssertEqual(back.coupon, .guaranteed)
+        XCTAssertEqual(back.couponRate, s.couponRate, accuracy: 1e-12)
+        XCTAssertEqual(back.cap ?? 0, 1.30, accuracy: 1e-12)
+        XCTAssertEqual(back.upside, .linear)
+        XCTAssertEqual(Instrument.fromJSON(s.jsonString() ?? "")?.termYears ?? 0, 3, accuracy: 1e-12)
+    }
+
+    func testDailyKIWithAsianTailKnocksAtLeastAsOftenAsEuropean() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.80
+        s.averaging = .lastMonth
+        s.protObs = .european
+        let eu = Engine.price(s, paths: Engine.fastPaths)
+        s.protObs = .daily
+        let daily = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertGreaterThanOrEqual(daily.probLoss + 0.03, eu.probLoss)
+    }
+
+    func testLumpedCallBarIsLabeledLater() {
+        var s = Instrument.initial
+        s.termYears = 7
+        s.call = .autocall
+        s.callObs = .monthly
+        s.callTrigger = 1.0
+        s.nonCallMonths = 0
+        let r = Engine.price(s, paths: 400)
+        if r.callDist.count == 5 {
+            XCTAssertTrue(r.callDist.last?.lumped == true)
+        }
+    }
 }

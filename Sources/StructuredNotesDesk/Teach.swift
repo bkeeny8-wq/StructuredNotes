@@ -446,7 +446,7 @@ public enum Teach {
         if a.protObs != b.protObs {
             return ChangeNote(
                 label: "Protection observation → \(b.protObs.rawValue)",
-                why: "This is the most under-read line on a term sheet. European looks once, at maturity. Monitored looks on a schedule and the breach sticks. Daily with a Brownian bridge also counts the touches that happen between closes. The same barrier level can price points apart depending only on how it is watched.")
+                why: "This is the most under-read line on a term sheet. European looks once, at maturity. Monitored looks on a schedule and the breach sticks. Monthly closes + bridge also counts interpolated hits between those closes — not a 252-day fixings grid. The same barrier level can price points apart depending only on how it is watched.")
         }
 
         // ---- rates and funding
@@ -561,7 +561,7 @@ public enum Teach {
                steps: ["A 60% knock-in, observed at maturity only (European).",
                        "In the Downside block, change protection observation to monthly, then to daily.",
                        "Leave the barrier level untouched the whole time."],
-               notice: "Three materially different values from one unchanged headline number. Monitoring adds every observation date as a chance to break; the daily setting also counts touches between closes. When a term sheet says '60% barrier', the observation line is half the story.",
+               notice: "Three materially different values from one unchanged headline number. Monitoring adds every observation date as a chance to break; the daily setting is monthly closes plus a Brownian-bridge correction for touches between them — not a 252-day grid. When a term sheet says '60% barrier', the observation line is half the story.",
                spec: build { s in
                    s.members = ["SPX", "NDX", "RTY"]
                    s.coupon = .contingent; s.couponRate = 0.11; s.couponObs = .quarterly
@@ -602,7 +602,7 @@ public enum Teach {
                steps: ["Four-year SPX, absolute return down to an 80% knock-out, 60% knock-in below.",
                        "Study the maturity profile chart before reading anything else.",
                        "Then drag the knock-out from 80% down to 65%."],
-               notice: "The payoff makes a V: gains up, gains down to the knock-out, then the cliff. The peak sits exactly at the knock-out, and widening the band raises the value because more of the distribution pays you. Clients hear 'gains either way' — the knock-out is the fine print that limits it.",
+               notice: "The payoff is three regimes, not a clean V: gains above par, a par shelf between the 60% knock-in and the 80% knock-out, then gains again down to the knock-out, then the KI cliff. The peak sits at the knock-out, and widening the band raises the value because more of the distribution pays you. Clients hear 'gains either way' — the knock-out is the fine print that limits it, and the shelf is the stretch where you just get par back.",
                spec: build { s in
                    s.members = ["SPX"]; s.termYears = 4
                    s.upside = .absolute; s.participation = 1.0
@@ -722,8 +722,8 @@ public enum Teach {
               plain: "Below the buffer you lose more than a point per point, so a total loss becomes possible.",
               desk: "Gearing is 1 divided by the strike. Sells materially more downside than a plain buffer at the same level."),
         .init(name: "Barrier observation",
-              plain: "How often the barrier is checked: only at maturity, on a schedule, or every day.",
-              desk: "European, monitored, or continuous. The same level prices points apart across the three."),
+              plain: "How often the barrier is checked: only at maturity, on a schedule, or monthly closes with a Brownian-bridge correction for touches between them.",
+              desk: "European, monitored, or monthly+bridge. The same level prices points apart across the three."),
         .init(name: "Second chance",
               plain: "A barrier that already broke is forgiven if the final level recovers above a stated level.",
               desk: "Pulls an American knock back toward European. Recovers most of the monitoring penalty."),

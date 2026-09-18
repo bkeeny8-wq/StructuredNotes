@@ -10,6 +10,7 @@ import SwiftUI
 import Charts
 
 public struct DeskView: View {
+    @SceneStorage("structurednotes.spec") private var specJSON: String = ""
     @State private var spec: Instrument = .initial
     @State private var result: PricingResult?
     @State private var sens: Sensitivities?
@@ -27,6 +28,7 @@ public struct DeskView: View {
     @State private var lastDelta: Double?
     @State private var openLesson: Int?
     @State private var pricing = false
+    @State private var didRestore = false
 
     private let notional = 1000.0
 
@@ -44,8 +46,20 @@ public struct DeskView: View {
             .padding(16)
         }
         .background(Theme.paper)
-        .onAppear { reprice() }
-        .onChange(of: spec) { _, _ in reprice() }
+        .onAppear {
+            if !didRestore {
+                didRestore = true
+                if let saved = Instrument.fromJSON(specJSON), saved != spec {
+                    spec = saved
+                } else {
+                    reprice()
+                }
+            }
+        }
+        .onChange(of: spec) { _, new in
+            if let json = new.jsonString() { specJSON = json }
+            reprice()
+        }
     }
 
     private var header: some View {
@@ -137,9 +151,12 @@ public struct DeskView: View {
             ForEach(spec.members, id: \.self) { m in
                 let a = Market.asset(m)
                 let px = a.spot == 0 ? "—" : (a.spot < 1000 ? String(format: "%.2f", a.spot) : Fmt.usd0(a.spot))
-                Text("\(a.ticker) \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? "" : " est") · q \(Fmt.pct(a.div, 2))")
+                Text("\(a.ticker) \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? " modeled" : " est") · q \(Fmt.pct(a.div, 2))")
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
             }
+            Text(Market.asOf)
+                .font(.system(size: 10)).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true)
             if spec.members.count > 1 {
                 ChoiceChips(options: BasketStyle.allCases.map { ($0, $0.rawValue) },
                             selection: spec.basket) { k in mutate { $0.basket = k } }
@@ -388,7 +405,10 @@ public struct DeskView: View {
     }
 
     private struct CurvePt: Identifiable {
-        let id = UUID(); let t: Double; let lo: Double; let hi: Double
+        var id: Double { t }
+        let t: Double
+        let lo: Double
+        let hi: Double
     }
     private var curveSamples: [CurvePt] {
         stride(from: 0.25, through: 7.0, by: 0.25).map { t in
@@ -768,7 +788,7 @@ public struct DeskView: View {
                                     .foregroundStyle(Theme.opt)
                                 Capsule().fill(Theme.opt.opacity(0.85))
                                     .frame(width: 26, height: max(6, b.p * 220))
-                                Text(termStr(b.t))
+                                Text(b.lumped ? "later" : termStr(b.t))
                                     .font(.system(size: 10)).foregroundStyle(.secondary)
                             }
                         }
@@ -779,7 +799,7 @@ public struct DeskView: View {
                     .font(.system(size: 12, design: .monospaced))
                 Text("Runs to maturity un-called and clean: \(Fmt.pct(max(1 - r.probCalled - r.probLoss, 0), 0)).")
                     .font(.system(size: 11)).foregroundStyle(.secondary)
-                Text("Risk-neutral path frequencies — the distribution advisors get asked about.")
+                Text("Risk-neutral pricing weights — the right input for valuation, the wrong input for a client's expected return.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
@@ -1031,7 +1051,10 @@ public struct DeskView: View {
     }
 
     private struct PayoffPoint: Identifiable {
-        let id = UUID(); let ret: Double; let series: String; let value: Double
+        var id: String { series + String(ret) }
+        let ret: Double
+        let series: String
+        let value: Double
     }
     private var payoffPoints: [PayoffPoint] {
         var pts: [PayoffPoint] = []
@@ -1270,19 +1293,27 @@ public struct DeskView: View {
     private var riskCard: some View {
         Card(title: "Risk (terms frozen, market bumped)", help: Teach.blockHelp("risk")) {
             if let g = sens {
-                HStack(spacing: 8) {
-                    StatCard(title: "Mark", value: Fmt.pct(g.mark, 1), sub: "of par")
-                    StatCard(title: "Gamma", value: g.gamma >= 0 ? "Long" : "Short",
-                             sub: g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs",
-                             color: g.gamma >= 0 ? Theme.bond : Theme.loss)
-                    StatCard(title: "Correlation",
-                             value: spec.members.count > 1 ? String(format: "%+.2f", g.corr * notional) : "—",
-                             sub: "per +0.05 ρ", color: g.corr >= 0 ? Theme.bond : Theme.loss)
-                    StatCard(title: "Funding DV", value: String(format: "%+.2f", g.fundingDV * notional),
-                             sub: "per +10bp spread")
-                    StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
-                             sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
-                    StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                VStack(spacing: 8) {
+                    HStack(spacing: 8) {
+                        StatCard(title: "Mark", value: Fmt.pct(g.mark, 1), sub: "of par")
+                        StatCard(title: "Delta", value: String(format: "%+.2f", g.delta * notional),
+                                 sub: "per 1% spot", color: g.delta >= 0 ? Theme.bond : Theme.loss)
+                        StatCard(title: "Vega", value: String(format: "%+.2f", g.vega * notional),
+                                 sub: "per vol pt", color: g.vega >= 0 ? Theme.bond : Theme.loss)
+                        StatCard(title: "Gamma", value: g.gamma >= 0 ? "Long" : "Short",
+                                 sub: g.gamma >= 0 ? "buys dips, sells rips" : "sells weakness into obs",
+                                 color: g.gamma >= 0 ? Theme.bond : Theme.loss)
+                    }
+                    HStack(spacing: 8) {
+                        StatCard(title: "Correlation",
+                                 value: spec.members.count > 1 ? String(format: "%+.2f", g.corr * notional) : "—",
+                                 sub: "per +0.05 ρ", color: g.corr >= 0 ? Theme.bond : Theme.loss)
+                        StatCard(title: "Funding DV", value: String(format: "%+.2f", g.fundingDV * notional),
+                                 sub: "per +10bp spread")
+                        StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
+                                 sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
+                        StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                    }
                 }
             } else {
                 ProgressView().font(.footnote)
@@ -1455,7 +1486,7 @@ public struct DeskView: View {
         var out = [String]()
         if spec.downside == .kiPut {
             let obs = spec.protObs == .european ? "European"
-                : spec.protObs == .daily ? "daily-monitored (bridge) — richest and stickiest"
+                : spec.protObs == .daily ? "monthly closes + Brownian-bridge hits"
                 : "\(spec.protObs == .monthly ? "monthly" : "quarterly")-monitored"
             out.append("Long the client's \(Fmt.pct(spec.protection, 0)) KI put, \(obs). Vega and gamma concentrate at that strike.")
         }
@@ -1520,22 +1551,38 @@ public struct DeskView: View {
         lastChange = nil; lastDelta = nil; prevSpec = nil; prevValue = nil
     }
 
+    private static let mcQueue = DispatchQueue(label: "structurednotes.mc", qos: .userInitiated)
+    private static let pricingGate = PricingGate()
+
     private func reprice() {
         repriceTask?.cancel()
         let snapshot = spec
         let baseSpec = prevSpec
         let baseValue = prevValue
+        let myGen = Self.pricingGate.next()
         pricing = true
         repriceTask = Task.detached(priority: .userInitiated) {
-            // debounce: coalesce slider/curve-drag ticks into one compute
             try? await Task.sleep(nanoseconds: 120_000_000)
-            if Task.isCancelled { return }
+            if Task.isCancelled || Self.pricingGate.current() != myGen { return }
             await MainActor.run {
                 self.ladder = []; self.ledger = []; self.charges = nil
                 self.events = []; self.assetRisk = []
             }
-            let r = Engine.price(snapshot)
-            let g = Engine.sensitivities(snapshot, mark: r.value)
+            let head: (PricingResult, Sensitivities)? = await withCheckedContinuation { cont in
+                Self.mcQueue.async {
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let r = Engine.price(snapshot)
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let g = Engine.sensitivities(snapshot, mark: r.value)
+                    cont.resume(returning: (r, g))
+                }
+            }
+            guard let head, Self.pricingGate.current() == myGen else { return }
+            let (r, g) = head
             await MainActor.run {
                 if snapshot == self.spec {
                     self.result = r; self.sens = g
@@ -1544,7 +1591,6 @@ public struct DeskView: View {
                             self.lastChange = note
                             self.lastDelta = r.value - bv
                         } else {
-                            // never let an old explanation sit next to a new number
                             self.lastChange = nil
                             self.lastDelta = nil
                         }
@@ -1554,17 +1600,56 @@ public struct DeskView: View {
                 }
                 self.pricing = false
             }
-            let ch = Engine.charges(snapshot, midValue: r.value, vega: g.vega)
-            await MainActor.run { if snapshot == self.spec { self.charges = ch } }
-            let ar = Engine.perAssetRisk(snapshot)
-            await MainActor.run { if snapshot == self.spec { self.assetRisk = ar } }
-            let ev = Engine.eventScenarios(snapshot)
-            await MainActor.run { if snapshot == self.spec { self.events = ev } }
-            let lad = Engine.spotLadder(snapshot)
-            await MainActor.run { if snapshot == self.spec { self.ladder = lad } }
-            let led = Engine.featureLedger(snapshot)
-            await MainActor.run { if snapshot == self.spec { self.ledger = led } }
+            let tail: (ChargeStack, [Engine.AssetRisk], [Engine.EventBlock], [LadderRow], [LedgerRow])? = await withCheckedContinuation { cont in
+                Self.mcQueue.async {
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let ch = Engine.charges(snapshot, midValue: r.value, vega: g.vega)
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let ar = Engine.perAssetRisk(snapshot)
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let ev = Engine.eventScenarios(snapshot)
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let lad = Engine.spotLadder(snapshot)
+                    guard Self.pricingGate.current() == myGen else {
+                        cont.resume(returning: nil); return
+                    }
+                    let led = Engine.featureLedger(snapshot)
+                    cont.resume(returning: (ch, ar, ev, lad, led))
+                }
+            }
+            guard let tail, Self.pricingGate.current() == myGen else { return }
+            await MainActor.run {
+                if snapshot == self.spec {
+                    self.charges = tail.0
+                    self.assetRisk = tail.1
+                    self.events = tail.2
+                    self.ladder = tail.3
+                    self.ledger = tail.4
+                }
+            }
         }
+    }
+}
+
+private final class PricingGate: @unchecked Sendable {
+    private let lock = NSLock()
+    private var generation = 0
+    func next() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        generation += 1
+        return generation
+    }
+    func current() -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return generation
     }
 }
 

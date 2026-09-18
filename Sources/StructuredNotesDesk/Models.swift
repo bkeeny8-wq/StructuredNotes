@@ -9,7 +9,7 @@
 
 import Foundation
 
-public enum BasketStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum BasketStyle: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case worstOf = "Worst-of"
     case weighted = "Weighted basket"
     public var id: String { rawValue }
@@ -17,7 +17,7 @@ public enum BasketStyle: String, CaseIterable, Identifiable, Hashable, Sendable 
 
 /// Asian tail on the final valuation: average of daily closes over the last
 /// week (5 fixings) or the last month (21 fixings).
-public enum FinalAveraging: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum FinalAveraging: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case none = "Final close"
     case lastWeek = "Avg last week (5d)"
     case lastMonth = "Avg last month (21d)"
@@ -25,7 +25,7 @@ public enum FinalAveraging: String, CaseIterable, Identifiable, Hashable, Sendab
     public var fixings: Int { self == .none ? 0 : (self == .lastWeek ? 5 : 21) }
 }
 
-public enum CouponStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum CouponStyle: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case none = "No coupon"
     case guaranteed = "Guaranteed"
     case contingent = "Contingent"
@@ -35,7 +35,7 @@ public enum CouponStyle: String, CaseIterable, Identifiable, Hashable, Sendable 
 /// Coupon observation schedule. Dates are calendar month-ends from issue
 /// (quarterly = 3, 6, 9, … months). An incomplete leftover stub at maturity
 /// does not pay. European pays the full rate × tenor once at maturity.
-public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case monthly = "Monthly", quarterly = "Quarterly", semiannual = "Semi-annual", annual = "Annual"
     case european = "European (at maturity)"
     public var id: String { rawValue }
@@ -55,13 +55,13 @@ public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable {
 /// Contingent-coupon barrier observation: payment-date close only, or any
 /// monthly grid close during the coupon period. This is not a Brownian-bridge
 /// one-touch — KI daily monitoring is the setting that interpolates between closes.
-public enum BarrierObsStyle: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum BarrierObsStyle: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case onPaymentDate = "On payment date"
     case dailyMonitored = "Any monthly close"
     public var id: String { rawValue }
 }
 
-public enum CallObs: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum CallObs: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case monthly = "Monthly", quarterly = "Quarterly", semiannual = "Semi-annual", annual = "Annual"
     public var id: String { rawValue }
     public var perYear: Int {
@@ -75,18 +75,18 @@ public enum CallObs: String, CaseIterable, Identifiable, Hashable, Sendable {
     public var monthsPerPeriod: Int { 12 / perYear }
 }
 
-public enum CallFeature: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum CallFeature: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case none = "No call"
     case autocall = "Autocall"
     case issuerCall = "Issuer call"
     public var id: String { rawValue }
 }
 
-public enum ProtectionObs: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum ProtectionObs: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case european = "European (final only)"
     case quarterly = "Quarterly monitored"
     case monthly = "Monthly monitored"
-    case daily = "Daily (Brownian bridge)"
+    case daily = "Monthly closes + bridge"
     public var id: String { rawValue }
     public var perYear: Int {
         switch self {
@@ -98,14 +98,14 @@ public enum ProtectionObs: String, CaseIterable, Identifiable, Hashable, Sendabl
     public var monthsPerPeriod: Int { perYear > 0 ? 12 / perYear : 0 }
 }
 
-public enum DownsideKind: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum DownsideKind: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case par = "Full protection"
     case buffer = "Buffer (vanilla put)"
     case kiPut = "Knock-in put"
     public var id: String { rawValue }
 }
 
-public enum UpsideKind: String, CaseIterable, Identifiable, Hashable, Sendable {
+public enum UpsideKind: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case none = "None"
     case linear = "Linear participation"
     case digital = "Digital"
@@ -114,7 +114,7 @@ public enum UpsideKind: String, CaseIterable, Identifiable, Hashable, Sendable {
     public var id: String { rawValue }
 }
 
-public struct Instrument: Hashable, Sendable {
+public struct Instrument: Hashable, Sendable, Codable {
     // underlying: build the basket by adding members (1–4)
     public var members: [String]     // catalog tickers
     public var basket: BasketStyle
@@ -255,5 +255,18 @@ extension Instrument {
         if call == .none { snowball = false; lockIn = false }
         if snowball { memory = false }
         if couponObs == .european { memory = false }
+    }
+
+    public func jsonString() -> String? {
+        let enc = JSONEncoder()
+        guard let data = try? enc.encode(self) else { return nil }
+        return String(data: data, encoding: .utf8)
+    }
+
+    public static func fromJSON(_ raw: String) -> Instrument? {
+        guard let data = raw.data(using: .utf8),
+              var s = try? JSONDecoder().decode(Instrument.self, from: data) else { return nil }
+        s.applyBuilderRules()
+        return s
     }
 }

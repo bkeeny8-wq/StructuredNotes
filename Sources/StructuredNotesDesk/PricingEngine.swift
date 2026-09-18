@@ -15,12 +15,13 @@ import Foundation
 import Dispatch
 
 public struct CallBucket: Equatable, Identifiable, Sendable {
-    public var id: Double { t }
+    public var id: String { lumped ? "later" : String(t) }
     public var t: Double
     public var p: Double
+    public var lumped: Bool
 
-    public init(t: Double, p: Double) {
-        self.t = t; self.p = p
+    public init(t: Double, p: Double, lumped: Bool = false) {
+        self.t = t; self.p = p; self.lumped = lumped
     }
 }
 
@@ -362,6 +363,33 @@ public enum Engine {
 
                 var zNow = perf(x, s)
                 if isFinal && nSubs > 0 {
+                    let watchKI = s.downside == .kiPut && s.protObs != .european
+                    if watchKI || dailyBarrier {
+                        var prevX = xPrev
+                        var prevZ = zPrev
+                        for sub in 0..<nSubs {
+                            var day = [Double](repeating: 0, count: nA)
+                            for j in 0..<nA { day[j] = closes[sub * nA + j] }
+                            let zDay = perf(day, s)
+                            if watchKI && zDay < s.protection { knocked = true }
+                            if watchKI && bridge && !knocked {
+                                let B = s.protection
+                                if s.basket == .worstOf || nA == 1 {
+                                    for j in 0..<nA where prevX[j] > B && day[j] > B {
+                                        let vdt = vols[j] * vols[j] * dtSub
+                                        let pHit = exp(-2 * log(prevX[j] / B) * log(day[j] / B) / vdt)
+                                        if u[base + (nSteps - 1 + sub) * nA + j] < pHit { knocked = true; break }
+                                    }
+                                } else if prevZ > B && zDay > B && basketVol > 0 {
+                                    let pHit = exp(-2 * log(prevZ / B) * log(zDay / B) / (basketVol * basketVol * dtSub))
+                                    if u[base + (nSteps - 1 + sub) * nA] < pHit { knocked = true }
+                                }
+                            }
+                            if dailyBarrier && zDay < s.couponBarrier { periodClean = false }
+                            prevX = day
+                            prevZ = zDay
+                        }
+                    }
                     for j in 0..<nA { acc[j] = 0 }
                     for f in (nSubs - fixings)..<nSubs {
                         for j in 0..<nA { acc[j] += closes[f * nA + j] }
@@ -375,23 +403,29 @@ public enum Engine {
                     (s.protObs == .european ? isFinal : (protMonths == 0 ? isFinal : (i % protMonths == 0 || isFinal)))
                 let df = dfArr[i]
 
-                if isProtDate && zNow < s.protection { knocked = true }
-                if bridge && !knocked && !(isFinal && nSubs > 0) {
-                    // hit probability between grid closes, per asset (worst-of)
-                    // or on the basket with a portfolio-vol proxy (weighted)
-                    let B = s.protection
-                    if s.basket == .worstOf || nA == 1 {
-                        for j in 0..<nA where xPrev[j] > B && x[j] > B {
-                            let pHit = exp(-2 * log(xPrev[j] / B) * log(x[j] / B) / varDt[j])
-                            if u[base + (i - 1) * nA + j] < pHit { knocked = true; break }
-                        }
-                    } else if zPrev > B && zNow > B && basketVol > 0 {
-                        let pHit = exp(-2 * log(zPrev / B) * log(zNow / B) / (basketVol * basketVol * dt))
-                        if u[base + (i - 1) * nA] < pHit { knocked = true }
+                if isFinal && nSubs > 0 {
+                    if s.downside == .kiPut && s.protObs == .european && zNow < s.protection {
+                        knocked = true
                     }
+                } else {
+                    if isProtDate && zNow < s.protection { knocked = true }
+                    if bridge && !knocked {
+                        // hit probability between grid closes, per asset (worst-of)
+                        // or on the basket with a portfolio-vol proxy (weighted)
+                        let B = s.protection
+                        if s.basket == .worstOf || nA == 1 {
+                            for j in 0..<nA where xPrev[j] > B && x[j] > B {
+                                let pHit = exp(-2 * log(xPrev[j] / B) * log(x[j] / B) / varDt[j])
+                                if u[base + (i - 1) * nA + j] < pHit { knocked = true; break }
+                            }
+                        } else if zPrev > B && zNow > B && basketVol > 0 {
+                            let pHit = exp(-2 * log(zPrev / B) * log(zNow / B) / (basketVol * basketVol * dt))
+                            if u[base + (i - 1) * nA] < pHit { knocked = true }
+                        }
+                    }
+                    if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
                 }
                 if bridge { for j in 0..<nA { xPrev[j] = x[j] }; zPrev = zNow }
-                if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
                 if s.lockIn && zNow >= s.lockLevel {
                     let lockObs = (callActive && callMonths > 0 && i % callMonths == 0)
                         || (couponActive && cpnMonths > 0 && i % cpnMonths == 0)
@@ -490,7 +524,7 @@ public enum Engine {
                                  if raw.count <= 5 { return raw }
                                  let head = Array(raw.prefix(4))
                                  let tail = raw.dropFirst(4).reduce(0) { $0 + $1.p }
-                                 return head + [CallBucket(t: raw[4].t, p: tail)]
+                                 return head + [CallBucket(t: raw[4].t, p: tail, lumped: true)]
                              }())
     }
 
@@ -673,7 +707,7 @@ public enum Engine {
             add("+ min redemption floor \(Int(s.minRedemption * 100))%") { $0.minRedemption = s.minRedemption }
         }
         if s.downside == .kiPut && s.protObs != .european {
-            let obsName = s.protObs == .monthly ? "monthly" : (s.protObs == .quarterly ? "quarterly" : "daily bridge")
+            let obsName = s.protObs == .monthly ? "monthly" : (s.protObs == .quarterly ? "quarterly" : "monthly+bridge")
             add("+ monitored barrier (\(obsName))") { $0.protObs = s.protObs }
         }
         if s.downside == .kiPut && s.secondChance {
