@@ -142,6 +142,30 @@ public enum Engine {
         return out
     }()
 
+    /// Brownian-bridge one-touch between two closes. `flipU` uses 1−u so a
+    /// coupon barrier and a KI on the same step do not share one draw.
+    static func brownianHit(barrier B: Double,
+                            prevX: [Double], nowX: [Double],
+                            zPrev: Double, zNow: Double,
+                            nA: Int, worstOf: Bool,
+                            varDt: [Double], basketVarDt: Double,
+                            u: [Double], u0: Int, flipU: Bool) -> Bool {
+        func draw(_ j: Int) -> Double {
+            let v = u[u0 + j]
+            return flipU ? 1 - v : v
+        }
+        if worstOf || nA == 1 {
+            for j in 0..<nA where prevX[j] > B && nowX[j] > B {
+                let pHit = exp(-2 * log(prevX[j] / B) * log(nowX[j] / B) / varDt[j])
+                if draw(j) < pHit { return true }
+            }
+        } else if zPrev > B && zNow > B && basketVarDt > 0 {
+            let pHit = exp(-2 * log(zPrev / B) * log(zNow / B) / basketVarDt)
+            if draw(0) < pHit { return true }
+        }
+        return false
+    }
+
     static func cholesky(rho: Double, n: Int) -> [[Double]] {
         if n == 1 { return [[1]] }
         var L = [[Double]](repeating: [Double](repeating: 0, count: n), count: n)
@@ -265,7 +289,7 @@ public enum Engine {
 
         var vols = [Double](), qv = [Double](), qvSub = [Double](), divsArr = [Double]()
         // per-asset step multipliers, hoisted out of the path/step loops
-        var volSqdt = [Double](), volSqdtSub = [Double](), varDt = [Double]()
+        var volSqdt = [Double](), volSqdtSub = [Double](), varDt = [Double](), varDtSub = [Double]()
         for (j, a) in assets.prefix(nA).enumerated() {
             let applies = bumpAsset == nil || bumpAsset == j
             let v = max(0.01, a.vol + s.volShift + (applies ? volBump : 0))
@@ -275,6 +299,7 @@ public enum Engine {
             volSqdt.append(v * sqdt)
             volSqdtSub.append(v * sqdtSub)
             varDt.append(v * v * dt)
+            varDtSub.append(v * v * dtSub)
         }
         // discount factors at step dates off the funding curve; risk-free
         // forwards between steps drive the drift
@@ -291,9 +316,12 @@ public enum Engine {
         let L = cholesky(rho: min(0.99, max(-0.45, s.correlation)), n: nA)
         let z = normals
         let u = uniforms
-        let bridge = s.downside == .kiPut && s.protObs == .daily
+        let kiBridge = s.downside == .kiPut && s.protObs == .daily
+        let cpnBridge = dailyBarrier
+        let watchBridge = kiBridge || cpnBridge
+        let worstOf = s.basket == .worstOf || nA == 1
         var basketVol = 0.0
-        if bridge && nA > 1 && s.basket == .weighted {
+        if watchBridge && nA > 1 && s.basket == .weighted {
             var num = 0.0, den = 0.0
             let rho = min(0.99, max(-0.45, s.correlation))
             for i in 0..<nA {
@@ -372,20 +400,25 @@ public enum Engine {
                             for j in 0..<nA { day[j] = closes[sub * nA + j] }
                             let zDay = perf(day, s)
                             if watchKI && zDay < s.protection { knocked = true }
-                            if watchKI && bridge && !knocked {
-                                let B = s.protection
-                                if s.basket == .worstOf || nA == 1 {
-                                    for j in 0..<nA where prevX[j] > B && day[j] > B {
-                                        let vdt = vols[j] * vols[j] * dtSub
-                                        let pHit = exp(-2 * log(prevX[j] / B) * log(day[j] / B) / vdt)
-                                        if u[base + (nSteps - 1 + sub) * nA + j] < pHit { knocked = true; break }
-                                    }
-                                } else if prevZ > B && zDay > B && basketVol > 0 {
-                                    let pHit = exp(-2 * log(prevZ / B) * log(zDay / B) / (basketVol * basketVol * dtSub))
-                                    if u[base + (nSteps - 1 + sub) * nA] < pHit { knocked = true }
+                            let u0 = base + (nSteps - 1 + sub) * nA
+                            if watchKI && kiBridge && !knocked {
+                                if brownianHit(barrier: s.protection, prevX: prevX, nowX: day,
+                                               zPrev: prevZ, zNow: zDay, nA: nA, worstOf: worstOf,
+                                               varDt: varDtSub, basketVarDt: basketVol * basketVol * dtSub,
+                                               u: u, u0: u0, flipU: false) {
+                                    knocked = true
                                 }
                             }
-                            if dailyBarrier && zDay < s.couponBarrier { periodClean = false }
+                            if cpnBridge && periodClean {
+                                if zDay < s.couponBarrier {
+                                    periodClean = false
+                                } else if brownianHit(barrier: s.couponBarrier, prevX: prevX, nowX: day,
+                                                      zPrev: prevZ, zNow: zDay, nA: nA, worstOf: worstOf,
+                                                      varDt: varDtSub, basketVarDt: basketVol * basketVol * dtSub,
+                                                      u: u, u0: u0, flipU: true) {
+                                    periodClean = false
+                                }
+                            }
                             prevX = day
                             prevZ = zDay
                         }
@@ -409,23 +442,27 @@ public enum Engine {
                     }
                 } else {
                     if isProtDate && zNow < s.protection { knocked = true }
-                    if bridge && !knocked {
-                        // hit probability between grid closes, per asset (worst-of)
-                        // or on the basket with a portfolio-vol proxy (weighted)
-                        let B = s.protection
-                        if s.basket == .worstOf || nA == 1 {
-                            for j in 0..<nA where xPrev[j] > B && x[j] > B {
-                                let pHit = exp(-2 * log(xPrev[j] / B) * log(x[j] / B) / varDt[j])
-                                if u[base + (i - 1) * nA + j] < pHit { knocked = true; break }
-                            }
-                        } else if zPrev > B && zNow > B && basketVol > 0 {
-                            let pHit = exp(-2 * log(zPrev / B) * log(zNow / B) / (basketVol * basketVol * dt))
-                            if u[base + (i - 1) * nA] < pHit { knocked = true }
+                    let u0 = base + (i - 1) * nA
+                    if kiBridge && !knocked {
+                        if brownianHit(barrier: s.protection, prevX: xPrev, nowX: x,
+                                       zPrev: zPrev, zNow: zNow, nA: nA, worstOf: worstOf,
+                                       varDt: varDt, basketVarDt: basketVol * basketVol * dt,
+                                       u: u, u0: u0, flipU: false) {
+                            knocked = true
                         }
                     }
-                    if dailyBarrier && zNow < s.couponBarrier { periodClean = false }
+                    if cpnBridge && periodClean {
+                        if zNow < s.couponBarrier {
+                            periodClean = false
+                        } else if brownianHit(barrier: s.couponBarrier, prevX: xPrev, nowX: x,
+                                              zPrev: zPrev, zNow: zNow, nA: nA, worstOf: worstOf,
+                                              varDt: varDt, basketVarDt: basketVol * basketVol * dt,
+                                              u: u, u0: u0, flipU: true) {
+                            periodClean = false
+                        }
+                    }
                 }
-                if bridge { for j in 0..<nA { xPrev[j] = x[j] }; zPrev = zNow }
+                if watchBridge { for j in 0..<nA { xPrev[j] = x[j] }; zPrev = zNow }
                 if s.lockIn && zNow >= s.lockLevel {
                     let lockObs = (callActive && callMonths > 0 && i % callMonths == 0)
                         || (couponActive && cpnMonths > 0 && i % cpnMonths == 0)
@@ -527,6 +564,34 @@ public enum Engine {
                                  let tail = raw.dropFirst(4).reduce(0) { $0 + $1.p }
                                  return head + [CallBucket(t: raw[4].t, p: tail, lumped: true)]
                              }())
+    }
+
+    /// Coupon (or snowball rate) that prints the displayed quote at par.
+    /// Mid is linear in the rate via Q, so one shot is exact for the model value.
+    /// When charges are on, the target is a mid of 1 + current charge stack so
+    /// the dealer offer sits at par; charges are refreshed once.
+    public static func couponForPar(_ s: Instrument, paths: Int = fastPaths) -> Double? {
+        guard s.coupon != .none else { return nil }
+        var trial = s
+        var solved: Double = 0
+        for _ in 0..<2 {
+            let r = price(trial, paths: paths)
+            guard r.qFactor > 1e-8 else { return nil }
+            let cur = trial.snowball ? trial.snowballRate : trial.couponRate
+            let other = r.value - cur * r.qFactor
+            var targetMid = 1.0
+            if trial.chargesOn {
+                let g = sensitivities(trial, mark: r.value)
+                let ch = charges(trial, midValue: r.value, vega: g.vega)
+                targetMid = 1.0 + ch.total
+            }
+            solved = (targetMid - other) / r.qFactor
+            guard solved.isFinite else { return nil }
+            solved = min(max(solved, 0), 0.25)
+            if trial.snowball { trial.snowballRate = solved } else { trial.couponRate = solved }
+            if !trial.chargesOn { break }
+        }
+        return solved
     }
 
     public struct AssetRisk: Equatable, Identifiable, Sendable {
@@ -791,7 +856,7 @@ public enum Engine {
             }
         }
         if s.coupon == .contingent && s.couponBarrierObs == .dailyMonitored {
-            add("+ monthly-close barrier (grid, not a bridge)") { $0.couponBarrierObs = .dailyMonitored }
+            add("+ coupon barrier monthly closes + bridge") { $0.couponBarrierObs = .dailyMonitored }
         }
         if s.memory {
             add("+ memory") { $0.memory = true }

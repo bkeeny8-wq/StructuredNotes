@@ -52,13 +52,19 @@ public enum CouponObs: String, CaseIterable, Identifiable, Hashable, Sendable, C
     public var monthsPerPeriod: Int { perYear > 0 ? 12 / perYear : 0 }
 }
 
-/// Contingent-coupon barrier observation: payment-date close only, or any
-/// monthly grid close during the coupon period. This is not a Brownian-bridge
-/// one-touch — KI daily monitoring is the setting that interpolates between closes.
+/// Contingent-coupon barrier observation: payment-date close only, or monthly
+/// closes plus a Brownian-bridge one-touch during the coupon period — the same
+/// interpolation KI daily monitoring uses.
 public enum BarrierObsStyle: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {
     case onPaymentDate = "On payment date"
-    case dailyMonitored = "Any monthly close"
+    case dailyMonitored = "Any monthly close"   // persisted label; UI shows deskLabel
     public var id: String { rawValue }
+    public var deskLabel: String {
+        switch self {
+        case .onPaymentDate: return "On payment date"
+        case .dailyMonitored: return "Monthly closes + bridge"
+        }
+    }
 }
 
 public enum CallObs: String, CaseIterable, Identifiable, Hashable, Sendable, Codable {

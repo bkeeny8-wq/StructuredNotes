@@ -243,4 +243,43 @@ final class EngineGoldenTests: XCTestCase {
         let below = first?.rows.first { abs($0.spot - 0.96) < 1e-9 }
         XCTAssertNotEqual(below?.mark ?? 1.0, 1.0, accuracy: 1e-4)
     }
+
+    func testCouponForParPrintsGuaranteedNoteAtPar() {
+        var s = guaranteedNote(rate: 0.105)
+        s.chargesOn = false
+        guard let c = Engine.couponForPar(s, paths: 1) else {
+            return XCTFail("solver returned nil")
+        }
+        s.couponRate = c
+        let r = Engine.price(s, paths: 1)
+        XCTAssertEqual(r.value, 1.0, accuracy: 1e-8)
+        XCTAssertGreaterThan(c, 0.03)
+        XCTAssertLessThan(c, 0.07)
+        XCTAssertNil(Engine.couponForPar(Instrument.initial, paths: 1))
+    }
+
+    func testCouponDailyMonitorKillsAtLeastAsOftenAsPaymentDate() {
+        var s = Instrument.initial
+        s.coupon = .contingent
+        s.couponRate = 0.10
+        s.couponBarrier = 0.90
+        s.couponObs = .monthly
+        s.couponBarrierObs = .onPaymentDate
+        s.chargesOn = false
+        let pay = Engine.price(s, paths: Engine.fastPaths)
+        s.couponBarrierObs = .dailyMonitored
+        let daily = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertLessThanOrEqual(daily.couponLeg, pay.couponLeg + 0.005)
+        XCTAssertEqual(BarrierObsStyle.dailyMonitored.deskLabel, "Monthly closes + bridge")
+    }
+
+    func testCatalogDisplayNamesAndHonestEstVols() {
+        XCTAssertEqual(Market.asset("IBIT").name, "iShares Bitcoin Trust")
+        XCTAssertGreaterThan(Market.asset("IBIT").vol, 0.40)
+        XCTAssertTrue(Market.asset("TLT").name.contains("Treasury"))
+        XCTAssertLessThan(Market.asset("TLT").vol, 0.22)
+        XCTAssertNotEqual(Market.asset("XLP").name, "XLP")
+        XCTAssertLessThan(Market.asset("XLP").vol, 0.20)
+        XCTAssertNotEqual(Market.asset("XLF").name, "XLF")
+    }
 }

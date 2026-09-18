@@ -1,6 +1,6 @@
 # Structured Notes — instrument builder (v22, teaching build)
 
-iPad SwiftUI **framework** that builds a structured note feature by feature, prices it, and explains itself.
+iPad-first SwiftUI **framework** that builds a structured note feature by feature, prices it, and explains itself. On iPhone the builder stacks above the work-through instead of squeezing into a 336pt rail.
 
 **Local path:** `/Users/brandonkeeny/Projects/Structured Notes`  
 **Remote:** https://github.com/bkeeny8-wq/StructuredNotes
@@ -23,6 +23,8 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 - Risk tab: what the Greeks mean for a note; model limitations honesty card
 - New `Teach.swift` (teaching copy kept apart from layout)
 
+Also: pin-and-compare two builds, lesson progress, share the term sheet, solve coupon to par (calendar-correct Q).
+
 Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 
 ## Layout
@@ -31,5 +33,6 @@ Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 Sources/StructuredNotesDesk/   # framework (incl. Teach.swift)
 Example/                       # demo app + AppIcon
 StructuredNotesDesk.xcodeproj
-generate_xcodeproj.py          # regenerates pbxproj (registers Teach.swift)
+generate_xcodeproj.py          # regenerates pbxproj (stable hashed IDs)
+Tests/StructuredNotesDeskTests # engine golden tests (`swift test` via Package.swift)
 ```

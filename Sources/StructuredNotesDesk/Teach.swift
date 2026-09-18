@@ -279,10 +279,10 @@ public enum Teach {
         }
         if a.couponBarrierObs != b.couponBarrierObs {
             return b.couponBarrierObs == .dailyMonitored
-                ? ChangeNote(label: "Coupon barrier → any monthly close in the period",
-                             why: "A monthly close below the barrier at any point in the coupon period now kills that coupon, instead of only the payment-date close mattering. This is the monthly simulation grid, not a Brownian-bridge one-touch (that's the KI daily setting). The same headline rate is worth less to you.")
+                ? ChangeNote(label: "Coupon barrier → monthly closes + bridge",
+                             why: "A close or a Brownian-bridge touch below the barrier at any point in the coupon period now kills that coupon — the same interpolation the KI daily setting uses. The same headline rate is worth less to you.")
                 : ChangeNote(label: "Coupon barrier → payment-date observed",
-                             why: "Only the level on the payment date matters now. Intra-period monthly closes are forgiven, so coupons are easier to earn.")
+                             why: "Only the level on the payment date matters now. Intra-period touches are forgiven, so coupons are easier to earn.")
         }
         if a.memory != b.memory {
             return b.memory
@@ -700,7 +700,7 @@ public enum Teach {
               desk: "A strip of digital options, one per observation. Pin risk on every date."),
         .init(name: "Coupon barrier",
               plain: "The level the underlying must hold for a contingent coupon to be paid.",
-              desk: "The digital strike. Payment-date vs any-monthly-close observation changes the price; this is not the KI Brownian-bridge setting."),
+              desk: "The digital strike. Payment-date vs monthly-closes-plus-bridge observation changes the price; both KI daily and coupon daily-monitor use the same Brownian-bridge interpolation."),
         .init(name: "Memory",
               plain: "Missed coupons are remembered and paid later, on the first observation that clears the barrier.",
               desk: "Chains the digitals together instead of leaving them independent. Harder to hedge, worth more to the client."),
@@ -798,7 +798,7 @@ public enum Teach {
             let label = s.snowball ? "Accrued Coupon Rate" : (s.coupon == .contingent ? "Contingent Coupon Rate" : "Fixed Coupon Rate")
             rows.append((label, "\(p(s.snowball ? s.snowballRate : s.couponRate)) per annum, paid \(s.snowball ? "on the call date" : s.couponObs.rawValue.lowercased())"))
             if s.coupon == .contingent {
-                rows.append(("Coupon Barrier", "\(p(s.couponBarrier, 0)) of Initial Level\(s.couponBarrierObs == .dailyMonitored ? ", observed on each monthly close during the coupon period" : ", observed on each Coupon Observation Date")"))
+                rows.append(("Coupon Barrier", "\(p(s.couponBarrier, 0)) of Initial Level\(s.couponBarrierObs == .dailyMonitored ? ", observed continuously during the coupon period (monthly closes + Brownian-bridge hits)" : ", observed on each Coupon Observation Date")"))
             }
             if s.memory { rows.append(("Memory Feature", "Applicable — unpaid coupons are carried forward")) }
         }
@@ -854,6 +854,14 @@ public enum Teach {
         }
         rows.append(("Issuer Credit", "All payments are subject to the credit risk of the Issuer. These notes are unsecured obligations and are not deposits."))
         return rows
+    }
+
+    public static func termSheetPlain(_ s: Instrument, offer: Double?) -> String {
+        var lines = ["STRUCTURED NOTE — term sheet (model)", ""]
+        for (label, value) in termSheet(s, offer: offer) {
+            lines.append("\(label): \(value)")
+        }
+        return lines.joined(separator: "\n")
     }
 }
 

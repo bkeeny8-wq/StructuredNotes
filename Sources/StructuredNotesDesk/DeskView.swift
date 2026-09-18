@@ -11,7 +11,11 @@ import SwiftUI
 import Charts
 
 public struct DeskView: View {
+    @Environment(\.horizontalSizeClass) private var sizeClass
     @SceneStorage("structurednotes.spec") private var specJSON: String = ""
+    @SceneStorage("structurednotes.pinned") private var pinnedJSON: String = ""
+    @SceneStorage("structurednotes.pinnedMark") private var pinnedMarkRaw: String = ""
+    @SceneStorage("structurednotes.lessonsDone") private var lessonsDoneRaw: String = ""
     @State private var spec: Instrument = .initial
     @State private var result: PricingResult?
     @State private var sens: Sensitivities?
@@ -32,8 +36,10 @@ public struct DeskView: View {
     @State private var rememberedAutocallTrigger: Double = 1.0
     @State private var rememberedTriggerStep: Double = 0
     @State private var didRestore = false
+    @State private var solverNote: String?
 
     private let notional = 1000.0
+    private var isCompact: Bool { sizeClass == .compact }
 
     public init() {}
 
@@ -41,12 +47,19 @@ public struct DeskView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 12) {
                 header
-                HStack(alignment: .top, spacing: 14) {
-                    builder.frame(width: 336)
-                    workThrough
+                if isCompact {
+                    VStack(alignment: .leading, spacing: 14) {
+                        builder
+                        workThrough
+                    }
+                } else {
+                    HStack(alignment: .top, spacing: 14) {
+                        builder.frame(width: 336)
+                        workThrough
+                    }
                 }
             }
-            .padding(16)
+            .padding(isCompact ? 12 : 16)
         }
         .background(Theme.paper)
         .onAppear {
@@ -66,22 +79,44 @@ public struct DeskView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 2) {
+        VStack(alignment: .leading, spacing: 8) {
             HStack(alignment: .firstTextBaseline) {
                 Text("Structured Notes")
-                    .font(.system(size: 26, weight: .semibold, design: .serif))
+                    .font(.system(size: isCompact ? 22 : 26, weight: .semibold, design: .serif))
                 Spacer()
-                Button {
-                    clearTrail()
-                    spec = .initial
-                } label: {
-                    Label("Reset", systemImage: "arrow.counterclockwise")
-                        .font(.system(size: 12, weight: .semibold))
-                }
-                .buttonStyle(.bordered)
-                .tint(Theme.ink)
+                if !isCompact { headerButtons }
             }
+            if isCompact { headerButtons }
             Divider().overlay(Theme.ink)
+        }
+    }
+
+    private var headerButtons: some View {
+        FlexibleWrap(spacing: 6) {
+            Button {
+                pinnedJSON = spec.jsonString() ?? ""
+                pinnedMarkRaw = result.map { String($0.value) } ?? ""
+            } label: {
+                Label(pinnedJSON.isEmpty ? "Pin build" : "Re-pin", systemImage: "pin")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.ink)
+            ShareLink(item: Teach.termSheetPlain(spec, offer: charges?.offer)) {
+                Label("Share term sheet", systemImage: "square.and.arrow.up")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.ink)
+            Button {
+                clearTrail()
+                spec = .initial
+            } label: {
+                Label("Reset", systemImage: "arrow.counterclockwise")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.bordered)
+            .tint(Theme.ink)
         }
     }
 
@@ -154,7 +189,7 @@ public struct DeskView: View {
             ForEach(spec.members, id: \.self) { m in
                 let a = Market.asset(m)
                 let px = a.spot == 0 ? "—" : (a.spot < 1000 ? String(format: "%.2f", a.spot) : Fmt.usd0(a.spot))
-                Text("\(a.ticker) \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? " modeled" : " est") · q \(Fmt.pct(a.div, 2))")
+                Text("\(a.ticker) — \(a.name) · \(px) · σ \(Fmt.pct(a.vol))\(a.sourced ? " modeled" : " est") · q \(Fmt.pct(a.div, 2))")
                     .font(.system(size: 10.5, design: .monospaced)).foregroundStyle(.secondary)
             }
             Text(Market.asOf)
@@ -234,10 +269,10 @@ public struct DeskView: View {
                     LeverRow(label: "Coupon barrier",
                              value: $spec.couponBarrier, range: 0.4...1.0, step: 0.01, field: .pct0)
                     if spec.couponObs != .european {
-                        ChoiceChips(options: BarrierObsStyle.allCases.map { ($0, "Obs: " + $0.rawValue.lowercased()) },
+                        ChoiceChips(options: BarrierObsStyle.allCases.map { ($0, "Obs: " + $0.deskLabel.lowercased()) },
                                     selection: spec.couponBarrierObs) { k in mutate { $0.couponBarrierObs = k } }
                         if spec.couponBarrierObs == .dailyMonitored {
-                            Text("Any monthly close below the barrier during the coupon period kills that coupon. This is the monthly grid, not a Brownian-bridge one-touch — KI daily monitoring is the setting that interpolates between closes.")
+                            Text("A close or a Brownian-bridge touch below the barrier at any point in the coupon period kills that coupon — the same interpolation KI daily monitoring uses, not a 252-day grid.")
                                 .font(.system(size: 10)).foregroundStyle(.secondary)
                         }
                     }
@@ -245,6 +280,37 @@ public struct DeskView: View {
                         ChipToggle(label: "Memory", on: spec.memory) { mutate { $0.memory.toggle() } }
                     }
                 }
+                Button {
+                    let snapshot = spec
+                    pricing = true
+                    Task.detached(priority: .userInitiated) {
+                        let c = await withCheckedContinuation { cont in
+                            Self.mcQueue.async {
+                                cont.resume(returning: Engine.couponForPar(snapshot))
+                            }
+                        }
+                        await MainActor.run {
+                            self.pricing = false
+                            if let c {
+                                mutate { s in
+                                    if s.snowball { s.snowballRate = c } else { s.couponRate = c }
+                                }
+                                solverNote = snapshot.chargesOn
+                                    ? "Set so the dealer offer prints at par (charges held at the current stack, then refreshed)."
+                                    : "Set so the model mid prints at par — exact via Q on this schedule."
+                            } else {
+                                solverNote = "No coupon dates survive on this build, so there is no rate that prints par."
+                            }
+                        }
+                    }
+                } label: {
+                    Label(spec.snowball ? "Solve snowball to par" : "Solve coupon to par",
+                          systemImage: "equal.circle")
+                        .font(.system(size: 12, weight: .semibold))
+                }
+                .buttonStyle(.bordered).tint(Theme.bond)
+                Text(solverNote ?? "Solves the coupon so the dealer offer prints at par (model mid, if charges are off). Linear in Q on the live calendar, so the mid identity is exact.")
+                    .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
     }
@@ -569,6 +635,7 @@ public struct DeskView: View {
     }
 
     private func mutate(_ f: (inout Instrument) -> Void) {
+        solverNote = nil
         var s = spec
         let beforeMembers = s.members
         let beforeBasket = s.basket
@@ -594,6 +661,7 @@ public struct DeskView: View {
         VStack(spacing: 12) {
             PillSelector(tab: $tab)
             if let ch = lastChange { changeCard(ch) }
+            if pinnedSpec != nil && tab == .note { compareCard }
             switch tab {
             case .note:
                 if isBare { startHereCard }
@@ -889,20 +957,34 @@ public struct DeskView: View {
 
     private var lessonsCard: some View {
         Card(title: "Guided lessons") {
-            Text("Eleven builds, in order. Each one loads a structure into the rail and tells you what to do to it and what to watch. Work through them and you will have priced every major feature on the US shelf.")
+            let done = doneLessons
+            let next = Teach.lessons.first { !done.contains($0.number) }
+            Text("\(done.count) of \(Teach.lessons.count) loaded. Each one drops a structure into the rail and tells you what to do to it and what to watch.")
                 .font(.system(size: 12)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            if let next {
+                Text("Next: Lesson \(next.number) — \(next.title)")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.bond)
+            } else {
+                Text("You've loaded every lesson. Reset progress if you want to walk them again.")
+                    .font(.system(size: 12.5, weight: .semibold))
+                    .foregroundStyle(Theme.bond)
+            }
             ForEach(Teach.lessons) { lesson in
                 VStack(alignment: .leading, spacing: 7) {
                     Button {
                         openLesson = openLesson == lesson.number ? nil : lesson.number
                     } label: {
                         HStack(alignment: .firstTextBaseline, spacing: 8) {
+                            Image(systemName: done.contains(lesson.number) ? "checkmark.circle.fill" : "circle")
+                                .font(.system(size: 16))
+                                .foregroundStyle(done.contains(lesson.number) ? Theme.bond : Theme.fee)
                             Text("\(lesson.number)")
                                 .font(.system(size: 12, weight: .bold, design: .monospaced))
                                 .foregroundStyle(.white)
                                 .frame(width: 22, height: 22)
-                                .background(Circle().fill(Theme.ink))
+                                .background(Circle().fill(next?.number == lesson.number ? Theme.bond : Theme.ink))
                             VStack(alignment: .leading, spacing: 1) {
                                 Text(lesson.title).font(.system(size: 13.5, weight: .semibold))
                                     .fixedSize(horizontal: false, vertical: true)
@@ -934,6 +1016,7 @@ public struct DeskView: View {
                             }
                             Button {
                                 clearTrail()
+                                markLessonDone(lesson.number)
                                 spec = lesson.spec
                                 tab = .note
                             } label: {
@@ -949,6 +1032,13 @@ public struct DeskView: View {
                 }
                 .padding(.vertical, 5)
                 .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
+            }
+            if !done.isEmpty {
+                Button("Reset lesson progress") {
+                    lessonsDoneRaw = ""
+                }
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(Theme.fee)
             }
         }
     }
@@ -972,6 +1062,11 @@ public struct DeskView: View {
             Text("Read it against the rail: each phrase here is a lever you just dragged. The two most under-read lines on a real term sheet are the barrier observation and the estimated value.")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
+            ShareLink(item: Teach.termSheetPlain(spec, offer: charges?.offer)) {
+                Label("Share term sheet", systemImage: "square.and.arrow.up")
+                    .font(.system(size: 12, weight: .semibold))
+            }
+            .buttonStyle(.bordered).tint(Theme.ink)
         }
     }
 
@@ -986,6 +1081,63 @@ public struct DeskView: View {
                 HStack(alignment: .top, spacing: 8) {
                     Circle().fill(Theme.fee).frame(width: 5, height: 5).padding(.top, 6)
                     Text(line).font(.system(size: 12.5))
+                }
+            }
+        }
+    }
+
+    private var compareCard: some View {
+        Card(title: "Pinned vs live") {
+            if let pinned = pinnedSpec {
+                let liveMark = result?.value
+                let pinMark = pinnedMark
+                let pinCol = VStack(alignment: .leading, spacing: 3) {
+                    Text("PINNED").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.fee)
+                    Text(pinMark.map { Fmt.pct($0, 2) } ?? "—")
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                    Text(blurb(pinned)).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                let liveCol = VStack(alignment: .leading, spacing: 3) {
+                    Text("LIVE").font(.system(size: 9, weight: .bold)).foregroundStyle(Theme.opt)
+                    Text(liveMark.map { Fmt.pct($0, 2) } ?? "…")
+                        .font(.system(size: 20, weight: .bold, design: .monospaced))
+                        .foregroundStyle(Theme.bond)
+                    Text(blurb(spec)).font(.system(size: 11)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                if isCompact {
+                    VStack(alignment: .leading, spacing: 10) { pinCol; liveCol }
+                } else {
+                    HStack(alignment: .top, spacing: 12) { pinCol; liveCol }
+                }
+                if let a = pinMark, let b = liveMark {
+                    Text(String(format: "Δ %+.2f pts of par", (b - a) * 100))
+                        .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(b >= a ? Theme.bond : Theme.loss)
+                }
+                if let note = Teach.describeChange(from: pinned, to: spec) {
+                    Text(note.why).font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                HStack {
+                    Button {
+                        clearTrail()
+                        spec = pinned
+                    } label: {
+                        Label("Load pinned", systemImage: "arrow.uturn.backward")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered).tint(Theme.ink)
+                    Button {
+                        pinnedJSON = ""; pinnedMarkRaw = ""
+                    } label: {
+                        Label("Clear pin", systemImage: "pin.slash")
+                            .font(.system(size: 12, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered).tint(Theme.fee)
                 }
             }
         }
@@ -1051,13 +1203,13 @@ public struct DeskView: View {
             if spec.snowball {
                 var cpn = "snowball \(Fmt.pct(spec.snowballRate))"
                 if spec.coupon == .contingent { cpn += " contingent @ \(Fmt.pct(spec.couponBarrier, 0))" }
-                if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", monthly-close obs" }
+                if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", monthly+bridge obs" }
                 parts.append(cpn)
             } else {
                 var cpn = "\(Fmt.pct(spec.couponRate)) \(spec.coupon == .guaranteed ? "guaranteed" : "contingent @ \(Fmt.pct(spec.couponBarrier, 0))")"
                 cpn += " (\(spec.couponObs.rawValue.lowercased()))"
                 if spec.memory { cpn += " memory" }
-                if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", monthly-close obs" }
+                if spec.couponBarrierObs == .dailyMonitored && spec.coupon == .contingent { cpn += ", monthly+bridge obs" }
                 parts.append(cpn)
             }
         }
@@ -1555,7 +1707,7 @@ public struct DeskView: View {
             out.append("Long the \(spec.gearedBuffer ? "geared " : "")buffer put struck \(Fmt.pct(spec.protection, 0))\(spec.gearedBuffer ? " — full downside reachable" : "").")
         }
         if spec.coupon == .contingent {
-            out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", any monthly close in the period" : "") — pin risk every observation date.")
+            out.append("Short a \(spec.couponObs.rawValue.lowercased()) digital ladder at \(Fmt.pct(spec.couponBarrier, 0))\(spec.memory ? " with memory chaining" : "")\(spec.couponBarrierObs == .dailyMonitored ? ", monthly closes + Brownian-bridge hits" : "") — pin risk every observation date.")
         }
         if spec.call != .none {
             let prem = spec.callPremium > 0 ? " The \(Fmt.pct(spec.callPremium))/yr call premium enlarges the trigger digital." : ""
@@ -1607,6 +1759,28 @@ public struct DeskView: View {
     }
 
     // MARK: repricing
+
+    private var pinnedSpec: Instrument? { Instrument.fromJSON(pinnedJSON) }
+    private var pinnedMark: Double? { Double(pinnedMarkRaw) }
+
+    private var doneLessons: Set<Int> {
+        Set(lessonsDoneRaw.split(separator: ",").compactMap { Int($0) })
+    }
+
+    private func markLessonDone(_ n: Int) {
+        var s = doneLessons
+        s.insert(n)
+        lessonsDoneRaw = s.sorted().map(String.init).joined(separator: ",")
+    }
+
+    private func blurb(_ s: Instrument) -> String {
+        let names = s.members.joined(separator: "/")
+        let cpn: String
+        if s.coupon == .none { cpn = "no coupon" }
+        else if s.snowball { cpn = "snowball \(Fmt.pct(s.snowballRate))" }
+        else { cpn = "\(Fmt.pct(s.couponRate)) \(s.coupon == .guaranteed ? "gtd" : "contingent")" }
+        return "\(names), \(termStr(s.termYears)), \(cpn)"
+    }
 
     private func clearTrail() {
         lastChange = nil; lastDelta = nil; prevSpec = nil; prevValue = nil
