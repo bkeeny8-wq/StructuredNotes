@@ -379,6 +379,7 @@ final class EngineGoldenTests: XCTestCase {
         s.callObs = .quarterly
         s.nonCallMonths = 6
         s.chargesOn = false
+        XCTAssertGreaterThan(Engine.price(s, paths: 1).value, 1)
         guard let c = Engine.couponForPar(s, paths: 1) else {
             return XCTFail("solver returned nil")
         }
@@ -387,6 +388,64 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertEqual(r.value, 1.0, accuracy: 1e-6)
         XCTAssertGreaterThan(c, 0.02)
         XCTAssertLessThan(c, 0.12)
+    }
+
+    func testCouponForParRichAndCheapIssuerCallMeetAtPar() {
+        func spec(_ rate: Double) -> Instrument {
+            var s = guaranteedNote(rate: rate)
+            s.call = .issuerCall
+            s.callObs = .quarterly
+            s.nonCallMonths = 6
+            s.chargesOn = false
+            return s
+        }
+        let rich = spec(0.105)
+        let cheap = spec(0.02)
+        XCTAssertGreaterThan(Engine.price(rich, paths: 1).value, 1 + 1e-4)
+        XCTAssertLessThan(Engine.price(cheap, paths: 1).value, 1 - 1e-4)
+        guard let cRich = Engine.couponForPar(rich, paths: 1),
+              let cCheap = Engine.couponForPar(cheap, paths: 1) else {
+            return XCTFail("solver returned nil")
+        }
+        var sRich = rich; sRich.couponRate = cRich
+        var sCheap = cheap; sCheap.couponRate = cCheap
+        XCTAssertEqual(Engine.price(sRich, paths: 1).value, 1.0, accuracy: 1e-6)
+        XCTAssertEqual(Engine.price(sCheap, paths: 1).value, 1.0, accuracy: 1e-6)
+        XCTAssertEqual(cRich, cCheap, accuracy: 1e-5)
+        XCTAssertGreaterThan(cRich, 0.02)
+        XCTAssertLessThan(cRich, 0.10)
+    }
+
+    func testFeatureLedgerLastRowMatchesHeadlineOnDeterministicNote() {
+        var s = guaranteedNote()
+        s.chargesOn = false
+        let led = Engine.featureLedger(s, paths: 1)
+        let r = Engine.price(s, paths: 1)
+        XCTAssertFalse(led.isEmpty)
+        XCTAssertEqual(led.last!.value, r.value, accuracy: 1e-12)
+    }
+
+    func testFeatureLedgerLastRowMatchesHeadlineOnKI() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = false
+        let led = Engine.featureLedger(s, paths: Engine.fastPaths)
+        let r = Engine.price(s, paths: Engine.fastPaths)
+        XCTAssertFalse(led.isEmpty)
+        XCTAssertEqual(led.last!.value, r.value, accuracy: 1e-12)
+    }
+
+    func testFeatureLedgerLastRowMatchesHeadlineOnIssuerCall() {
+        var s = guaranteedNote(rate: 0.105)
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        let led = Engine.featureLedger(s, paths: 1)
+        let r = Engine.price(s, paths: 1)
+        XCTAssertEqual(led.last!.value, r.value, accuracy: 1e-12)
+        XCTAssertTrue(led.contains { $0.label.contains("issuer") })
     }
 
     func testLeverageVolAtSpotIsATMAndRisesBelow() {

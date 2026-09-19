@@ -159,7 +159,7 @@ public enum Teach {
                 watch: "Everything the desk is long, you are short, and vice versa. Reading this makes the pricing intuitive — you can see why the desk cares about the barrier strike, the observation dates, and the correlation, because those are the things it has to hedge.")
         case "ledger":
             return BlockHelp(
-                what: "The note rebuilt one feature at a time, priced at every step on the fast 1,600-path set (the headline mark uses 4,000). Each row's change is that feature's price in points of par — deltas versus the Note tab will not match to a tenth of a point.",
+                what: "The note rebuilt one feature at a time, priced at every step on the same 4,000 CRN paths as the Note tab, so the last row ties to the headline mark. Each row's change is that feature's price in points of par.",
                 moves: "",
                 watch: "Order matters: a feature's price depends on what is already switched on, because features interact. A barrier is worth much more on a worst-of than on a single index. Read the ledger as one particular path through the build, not as a set of independent prices.")
         default:
@@ -304,7 +304,7 @@ public enum Teach {
             if b.call == .issuerCall {
                 return ChangeNote(
                     label: "Coupon rate \(p(a.couponRate, 2)) → \(p(b.couponRate, 2))",
-                    why: "At a frozen spec, coupon leg = c × Q still ties. With issuer call, Q is not frozen: a richer coupon makes continuation more expensive for the bank, so more paths get called and Q shrinks. The move is not a straight line. That is why coupon-to-par iterates when this call is on.",
+                    why: "At a frozen spec, coupon leg = c × Q still ties. With issuer call, Q is not frozen: a richer coupon makes continuation more expensive for the bank, so more paths get called and Q shrinks. The move is not a straight line. That is why coupon-to-par solves quote(c) = par with a bracketed root finder, not a single Q shot.",
                     twoSided: true)
             }
             return ChangeNote(

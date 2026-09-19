@@ -9,8 +9,10 @@
 //  pay); protection has its own observation with a sticky knock-in; the
 //  final valuation can average daily fixings over the last week or month.
 //  Issuer call is a small Longstaff–Schwartz step (basis 1, z, z², knocked):
-//  the bank redeems when fitted continuation exceeds par + premium. Teaching
-//  cartoon of optimal exercise, not a desk LSMC. Default paths are flat vol
+//  the bank redeems when fitted continuation exceeds redemption (par +
+//  premium + snowball if on). Teaching cartoon of optimal exercise, not a
+//  desk LSMC. Below 40 paths the fit falls back to pathwise continuation
+//  (tests); the live mark uses the four-regressor OLS. Default paths are flat vol
 //  per name; an optional one-parameter leverage function (σ rises as the
 //  name trades down) puts a smile in the paths so barriers can see it
 //  without going through the skew charge. Not a calibrated Dupire surface.
@@ -919,32 +921,72 @@ public enum Engine {
     /// Coupon (or snowball rate) that prints the displayed quote at par.
     /// Mid is linear in the rate via Q when call timing does not depend on the
     /// coupon (bullet / autocall, charges off): one shot is exact. Issuer LS
-    /// exercise does depend on the coupon, so that case iterates. When charges
-    /// are on, the target is a mid of 1 + current charge stack so the dealer
-    /// offer sits at par; charges are refreshed each round.
+    /// exercise *does* depend on the coupon — Q changes at the call boundary —
+    /// so that case (and charges-on) uses a bracketed Illinois root finder on
+    /// quote(c) − 1 = 0 rather than a fixed number of Q-style iterates.
     public static func couponForPar(_ s: Instrument, paths: Int = fastPaths) -> Double? {
         guard s.coupon != .none else { return nil }
-        var trial = s
-        var solved: Double = 0
-        let issuer = trial.call == .issuerCall
-        let rounds = (trial.chargesOn || issuer) ? 6 : 1
-        for _ in 0..<rounds {
-            let r = price(trial, paths: paths)
+
+        func quoted(_ c: Double) -> Double? {
+            var t = s
+            let x = min(max(c, 0), 0.25)
+            if t.snowball { t.snowballRate = x } else { t.couponRate = x }
+            let r = price(t, paths: paths)
             guard r.qFactor > 1e-8 else { return nil }
-            let cur = trial.snowball ? trial.snowballRate : trial.couponRate
-            let other = r.value - cur * r.qFactor
-            var targetMid = 1.0
-            if trial.chargesOn {
-                let g = sensitivities(trial, mark: r.value)
-                let ch = charges(trial, midValue: r.value, vega: g.vega)
-                targetMid = 1.0 + ch.total
+            if t.chargesOn {
+                let g = sensitivities(t, mark: r.value)
+                let ch = charges(t, midValue: r.value, vega: g.vega)
+                return ch.offer
             }
-            solved = (targetMid - other) / r.qFactor
-            guard solved.isFinite else { return nil }
-            solved = min(max(solved, 0), 0.25)
-            if trial.snowball { trial.snowballRate = solved } else { trial.couponRate = solved }
+            return r.value
         }
-        return solved
+
+        let nonlinear = s.call == .issuerCall || s.chargesOn
+        if !nonlinear {
+            let r = price(s, paths: paths)
+            guard r.qFactor > 1e-8 else { return nil }
+            let cur = s.snowball ? s.snowballRate : s.couponRate
+            let other = r.value - cur * r.qFactor
+            let solved = (1.0 - other) / r.qFactor
+            guard solved.isFinite else { return nil }
+            return min(max(solved, 0), 0.25)
+        }
+
+        guard let vLo = quoted(0), let vHi = quoted(0.25) else { return nil }
+        let ftol = 1e-7
+        if abs(vLo - 1) <= ftol { return 0 }
+        if abs(vHi - 1) <= ftol { return 0.25 }
+        if vLo > 1 { return 0 }
+        if vHi < 1 { return 0.25 }
+        return illinoisRoot(lo: 0, hi: 0.25, flo: vLo - 1, fhi: vHi - 1, ftol: ftol) { c in
+            quoted(c).map { $0 - 1 }
+        }
+    }
+
+    /// Illinois regula falsi on a sign-changing bracket. Falls back to
+    /// bisection when the interpolated point leaves (lo, hi).
+    static func illinoisRoot(lo: Double, hi: Double, flo: Double, fhi: Double,
+                             ftol: Double, xtol: Double = 1e-8, maxIter: Int = 28,
+                             f: (Double) -> Double?) -> Double? {
+        var a = lo, b = hi, fa = flo, fb = fhi
+        var lastSide = 0
+        for _ in 0..<maxIter {
+            if abs(fb - fa) < 1e-18 { break }
+            var x = (a * fb - b * fa) / (fb - fa)
+            if x <= a || x >= b { x = 0.5 * (a + b) }
+            guard let fx = f(x) else { return nil }
+            if abs(fx) <= ftol || (b - a) <= xtol { return min(max(x, 0), 0.25) }
+            if fx > 0 {
+                b = x; fb = fx
+                if lastSide > 0 { fa *= 0.5 }
+                lastSide = 1
+            } else {
+                a = x; fa = fx
+                if lastSide < 0 { fb *= 0.5 }
+                lastSide = -1
+            }
+        }
+        return min(max(abs(fa) < abs(fb) ? a : b, 0), 0.25)
     }
 
     public struct AssetRisk: Equatable, Identifiable, Sendable {
@@ -1152,7 +1194,8 @@ public enum Engine {
 
     /// Rebuild the instrument one feature at a time and price each stage.
     /// Deltas between rows are each feature's price in points of par.
-    public static func featureLedger(_ s: Instrument) -> [LedgerRow] {
+    /// Default path count matches the Note-tab headline so the last row ties.
+    public static func featureLedger(_ s: Instrument, paths: Int = fullPaths) -> [LedgerRow] {
         var stages: [(String, Instrument)] = []
         var b = s
         b.members = [s.members.first ?? "SPX"]
@@ -1257,7 +1300,7 @@ public enum Engine {
             }
         }
         return stages.map { (label, st) in
-            LedgerRow(label: label, value: simulate(st, paths: fastPaths).pv)
+            LedgerRow(label: label, value: simulate(st, paths: paths).pv)
         }
     }
 }

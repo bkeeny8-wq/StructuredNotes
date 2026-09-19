@@ -338,8 +338,8 @@ public struct DeskView: View {
                                         : "Set so the model mid prints at par"
                                     if snapshot.call == .issuerCall {
                                         msg += snapshot.chargesOn
-                                            ? " Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
-                                            : ". Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
+                                            ? " Issuer exercise depends on the coupon, so this is a bracketed root finder on the quote, not a single Q shot."
+                                            : ". Issuer exercise depends on the coupon, so this is a bracketed root finder on the mid, not a single Q shot."
                                     } else if !snapshot.chargesOn {
                                         msg += " — exact via Q on this schedule."
                                     }
@@ -357,7 +357,7 @@ public struct DeskView: View {
                 }
                 .buttonStyle(.bordered).tint(Theme.bond)
                 Text(solverNote ?? (spec.call == .issuerCall
-                    ? "Solves the coupon so the quote prints at par. Issuer exercise depends on the coupon, so this iterates rather than using a single Q shot."
+                    ? "Solves the coupon so the quote prints at par. Issuer exercise depends on the coupon, so this is a bracketed root finder rather than a single Q shot."
                     : "Solves the coupon so the dealer offer prints at par (model mid, if charges are off). Linear in Q on the live calendar, so the mid identity is exact."))
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
@@ -860,7 +860,7 @@ public struct DeskView: View {
         ("Correlation is one number — unless you turn crash corr on",
          "Default: one pairwise correlation across the whole basket, constant in the market. Realised corr rises in sell-offs. The optional crash-corr toggle raises ρ as the basket trades down (per-step Cholesky). A desk uses a term/spot-dependent corr surface; this is a cartoon so a worst-of or weighted KI can see the spike. Default off."),
         ("The issuer call is a small Longstaff–Schwartz",
-         "The issuer redeems when a four-regressor fit (1, z, z², knocked) says continuation is worth more than redemption. A desk LSMC uses more basis functions, more paths, and often a funding-measure regression. Treat the call timing as directional, not a quote."),
+         "The issuer redeems when a four-regressor fit (1, z, z², knocked) says continuation is worth more than redemption. Below 40 paths the fit falls back to pathwise continuation — that is a test convenience; the live mark is OLS. A desk LSMC uses more basis functions, more paths, and often a funding-measure regression. Treat the call timing as directional, not a quote."),
         ("Barriers are watched at fixed times",
          "Monitored barriers are checked on their observation schedule. The daily setting adds a Brownian-bridge correction for touches between closes, which is close to continuous monitoring but not identical to it."),
         ("Prices come from a snapshot you own",
@@ -1487,7 +1487,7 @@ public struct DeskView: View {
                  "coupon leg = \(cName) × Q = \(rateDec) × \(qStr) = \(legDec) = \(Fmt.pct(r.couponLeg, 2)) of par = \(Fmt.usd0(r.couponLeg * notional)) per $1,000",
                  "coupons expected: \(String(format: "%.1f", r.avgCoupons))"],
                 spec.call == .issuerCall
-                ? "At this frozen spec, coupon leg = c × Q still ties exactly. Q itself is not frozen: issuer LS exercise depends on the coupon, so dragging the rate changes which paths survive and Q moves with it. Coupon-to-par therefore iterates rather than taking one Q shot."
+                ? "At this frozen spec, coupon leg = c × Q still ties exactly. Q itself is not frozen: issuer LS exercise depends on the coupon, so dragging the rate changes which paths survive and Q moves with it. Coupon-to-par therefore solves quote(c) = par with a bracketed root finder, not a single Q shot."
                 : "Q is the note's own discounted count of coupons that actually get paid — not the number of dates on the schedule, but what survives after barriers and early calls take their toll. Multiply the headline rate by Q and you have the whole income leg, exactly. If you learn one number from this app, learn Q: comparing two income notes means comparing rate times Q, not rate.")
         }
 
@@ -1584,7 +1584,7 @@ public struct DeskView: View {
                 .padding(.vertical, 4)
                 .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
             }
-            Text("Each row re-prices the build with one more feature at the same levers, on \(Engine.fastPaths.formatted()) paths rather than the headline \(Engine.fullPaths.formatted()). Green adds value to the holder; red is value sold. Do not expect 0.1pt agreement with the Note tab.")
+            Text("Each row re-prices the build with one more feature at the same levers, on the same \(Engine.fullPaths.formatted()) CRN paths as the Note tab — the last row ties to the headline mark. Green adds value to the holder; red is value sold.")
                 .font(.system(size: 10)).foregroundStyle(.secondary)
         }
     }
