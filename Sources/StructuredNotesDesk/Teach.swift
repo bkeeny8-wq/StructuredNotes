@@ -126,7 +126,7 @@ public enum Teach {
             return BlockHelp(
                 what: "The walk from a frictionless model price down to a number a desk could actually trade, and then down again to what the issuer nets after paying the distributor.",
                 moves: "",
-                watch: "This is where a term sheet's estimated value comes from. Note where the selling concession sits: below the dealer offer, not above it. Charge diffs are the 1,600-path CRN prefix of the 4,000-path mid. Coupon-to-par with charges on solves on that same prefix so the offer and the solver never mix path counts.")
+                watch: "This is where a term sheet's estimated value comes from. Note where the selling concession sits: below the dealer offer, not above it. The stack is one CRN prefix: 1,600-path mid minus 1,600-path charges, so the rows add. The Note-tab headline is 4,000 of the same array. Coupon-to-par with charges on prints this offer at par.")
         case "outcomes":
             return BlockHelp(
                 what: "How often each ending happens across the simulated paths: called early and when, finished with a loss, or ran to maturity clean.",
@@ -778,10 +778,10 @@ public enum Teach {
               desk: "Value is expressed per $1 of par so structures of different sizes compare directly."),
         .init(name: "Model value",
               plain: "What the package of bond and options is actually worth today, before any of the desk's costs.",
-              desk: "A frictionless mid. Nobody trades here; it is the starting point for the charge stack."),
+              desk: "A frictionless mid. The Note tab uses 4,000 CRN paths. The dealer-offer stack re-prices that same array's first 1,600 as its own mid so mid minus charges adds."),
         .init(name: "Estimated value",
               plain: "The number on the term sheet that sits below the $1,000 you paid. It is the dealer offer after charges.",
-              desk: "Mid less skew, overhedge, correlation and vega bid-ask, and reserves. Distribution fees sit below that again."),
+              desk: "The 1,600-path CRN-prefix mid less skew, overhedge, correlation and vega bid-ask, and reserves — not the 4,000-path headline minus 1,600-path diffs. Distribution fees sit below that again."),
         .init(name: "Funding leg",
               plain: "The bond part of the note: the issuer's promise to repay, discounted at the bank's own borrowing rate.",
               desk: "z_f(t) = Treasury zero plus credit spread. Every flow discounts at its own tenor off that curve."),
@@ -874,7 +874,7 @@ public enum Teach {
               desk: "CRN. The 1,600-path bump set is a prefix of the 4,000-path headline array, not a second draw. Makes charge, Greek, and ledger differences clean, and keeps the leg identity exact."),
         .init(name: "Monte Carlo",
               plain: "The model simulates thousands of possible market paths and averages what the note would pay on each.",
-              desk: "Risk-neutral GBM with a correlated Cholesky draw. Four thousand paths for the headline (Note tab, ledger). Greeks, charges, events, the ladder, and coupon-to-par when the quote is nonlinear use the first 1,600 of the same CRN array."),
+              desk: "Risk-neutral GBM with a correlated Cholesky draw. Four thousand paths for the headline (Note tab, ledger). Greeks, events, the ladder, and the dealer-offer stack (its mid and its charges) use the first 1,600 of the same CRN array. Coupon-to-par when the quote is nonlinear uses that prefix too."),
     ]
 
     // MARK: term-sheet translation
@@ -966,5 +966,5 @@ enum TeachCopy {
     static let chargesHelp = BlockHelp(
         what: "The bridge from a model mid to a price a desk could actually trade. Five costs: skew, overhedge, correlation bid-ask, vega bid-ask, and a flat reserve — then the selling concession below that. If local vol is on, skew is skipped so the smile is not charged twice.",
         moves: "Every charge lowers the offer. Skew is normally the largest on an income note, because a flat-volatility model badly underprices a deep out-of-the-money put. Correlation only bites when there is a basket.",
-        watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated. Charge diffs are the 1,600-path CRN prefix subtracted from the 4,000-path mid; coupon-to-par with charges on solves on that same prefix.")
+        watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated. The offer stack is the 1,600-path CRN prefix for both mid and charges; the Note-tab headline is 4,000 of the same array. Coupon-to-par with charges on prints this offer at par.")
 }

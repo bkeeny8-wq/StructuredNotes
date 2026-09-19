@@ -59,17 +59,21 @@ public struct PricingResult: Equatable, Sendable {
 }
 
 public struct ChargeStack: Equatable, Sendable {
+    public var mid: Double           // same-path model mid used in this stack
     public var skew: Double
     public var overhedge: Double
     public var corrBA: Double
     public var vegaBA: Double
     public var reserve: Double
     public var total: Double
-    public var offer: Double            // model mid − total, per $1 of par
+    public var offer: Double         // mid − total, per $1 of par
+    public var paths: Int            // CRN path count for mid and every diff
 
-    public init(skew: Double, overhedge: Double, corrBA: Double, vegaBA: Double, reserve: Double, total: Double, offer: Double) {
-        self.skew = skew; self.overhedge = overhedge; self.corrBA = corrBA; self.vegaBA = vegaBA
-        self.reserve = reserve; self.total = total; self.offer = offer
+    public init(mid: Double, skew: Double, overhedge: Double, corrBA: Double, vegaBA: Double,
+                reserve: Double, total: Double, offer: Double, paths: Int) {
+        self.mid = mid; self.skew = skew; self.overhedge = overhedge; self.corrBA = corrBA
+        self.vegaBA = vegaBA; self.reserve = reserve; self.total = total
+        self.offer = offer; self.paths = paths
     }
 }
 
@@ -130,9 +134,9 @@ public enum Engine {
     /// nonlinear (issuer LS or charges on). Paths `0..<fastPaths` reuse the
     /// same normals/uniforms as the headline — not a second random set —
     /// so bump diffs are sampling-noise-free on that prefix. Live UI keeps
-    /// this size so iPad reprice stays interactive. Coupon-to-par with
-    /// charges on uses this count for mid, vega, *and* the charge stack;
-    /// it never subtracts a 1,600-path offer from a 4,000-path mid.
+    /// this size so iPad reprice stays interactive. The dealer-offer stack
+    /// uses this count for *both* its mid and its charge diffs (offer =
+    /// prefix mid − prefix charges). The Note-tab headline stays 4,000.
     public static let fastPaths = 1600
     public static let maxAssets = 4
 
@@ -940,8 +944,8 @@ public enum Engine {
     /// quote(c) − 1 = 0 rather than a fixed number of Q-style iterates.
     /// Default path count is the cheaper CRN prefix (`fastPaths`) so a
     /// many-iterate solve stays interactive; the live button uses
-    /// `fullPaths` when one Q shot is enough. Mid, vega, and charges always
-    /// share this same `paths` — never a 4,000-path mid minus a 1,600-path stack.
+    /// `fullPaths` when one Q shot is enough. With charges on, the solver
+    /// quote is the same-path offer stack (prefix mid − prefix charges).
     public static func couponForPar(_ s: Instrument, paths: Int = fastPaths) -> Double? {
         guard s.coupon != .none else { return nil }
         let paths = clampedPathCount(paths)
@@ -954,7 +958,7 @@ public enum Engine {
             guard r.qFactor > 1e-8 else { return nil }
             if t.chargesOn {
                 let g = sensitivities(t, mark: r.value, paths: paths)
-                let ch = charges(t, midValue: r.value, vega: g.vega, paths: paths)
+                let ch = charges(t, vega: g.vega, paths: paths)
                 return ch.offer
             }
             return r.value
@@ -1068,19 +1072,19 @@ public enum Engine {
     /// Trading charges: the bridge from model mid to the dealer offer.
     /// Skew is leg-isolated (the downside leg repriced at its strike vol);
     /// overhedge shifts every discontinuity against the client; correlation
-    /// takes the adverse side of a ±Δρ band; vega bid-ask charges |vega|;
-    /// rebalancing/gap/model risk sit in the flat reserve. All diffs use the
-    /// same normal array (CRN), so they are clean of sampling noise.
-    /// Default `paths` is the 1,600-path CRN prefix; pass the solver's path
-    /// count when this stack is part of coupon-to-par so mid and offer
-    /// never silently mix 1,600 and 4,000.
-    public static func charges(_ s: Instrument, midValue: Double, vega: Double,
+    /// takes the adverse side of a ±Δρ band; vega bid-ask charges |vega|
+    /// from the same path count as this stack; rebalancing/gap/model risk
+    /// sit in the flat reserve. Mid and every diff share `paths` (default
+    /// the 1,600-path CRN prefix), so offer = mid − total with no mixed
+    /// averages. Pass the solver's path count from coupon-to-par. `vega`
+    /// should come from `sensitivities` at that same count.
+    public static func charges(_ s: Instrument, vega: Double,
                                paths: Int = fastPaths) -> ChargeStack {
-        guard s.chargesOn else {
-            return ChargeStack(skew: 0, overhedge: 0, corrBA: 0, vegaBA: 0,
-                               reserve: 0, total: 0, offer: midValue)
-        }
         let n = clampedPathCount(paths)
+        guard s.chargesOn else {
+            return ChargeStack(mid: 0, skew: 0, overhedge: 0, corrBA: 0, vegaBA: 0,
+                               reserve: 0, total: 0, offer: 0, paths: n)
+        }
         let baseF = simulate(s, paths: n)
         var skew = 0.0
         // Local vol already puts the smile in the paths; charging skew on top
@@ -1109,8 +1113,8 @@ public enum Engine {
         let vba = abs(vega) * s.volBA * 100
         let res = s.reserveBps / 10000
         let total = skew + over + corr + vba + res
-        return ChargeStack(skew: skew, overhedge: over, corrBA: corr, vegaBA: vba,
-                           reserve: res, total: total, offer: midValue - total)
+        return ChargeStack(mid: baseF.pv, skew: skew, overhedge: over, corrBA: corr, vegaBA: vba,
+                           reserve: res, total: total, offer: baseF.pv - total, paths: n)
     }
 
     public static func spotLadder(_ s: Instrument, paths: Int = fastPaths) -> [LadderRow] {

@@ -336,7 +336,7 @@ public struct DeskView: View {
                                 solverNote = {
                                     let bump = "the \(Engine.fastPaths.formatted())-path CRN prefix (same set as Greeks and charges)"
                                     if snapshot.chargesOn {
-                                        return "Set so the dealer offer prints at par on \(bump), then refreshed. Mid, vega, and the charge stack share that count — they never mix \(Engine.fastPaths.formatted()) with \(Engine.fullPaths.formatted()). The \(Engine.fullPaths.formatted())-path headline can sit a hair off par."
+                                        return "Set so the dealer offer prints at par on \(bump), then refreshed. That offer is the \(Engine.fastPaths.formatted())-path CRN-prefix stack (mid and charges share that count). The \(Engine.fullPaths.formatted())-path Note-tab mid can sit a hair off this offer."
                                     }
                                     if snapshot.call == .issuerCall {
                                         return "Set so the model mid prints at par on \(bump). Issuer exercise depends on the coupon, so this is a bracketed root finder on the mid, not a single Q shot. The \(Engine.fullPaths.formatted())-path headline can sit a hair off par."
@@ -856,7 +856,7 @@ public struct DeskView: View {
 
     private static let assumptionRows: [(String, String)] = [
         ("Simulation, not a formula",
-         "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise. The Note tab and feature ledger use 4,000 paths. Greeks, charges, events, and the ladder use the first 1,600 of that same array — a cheaper CRN prefix, not a second random set."),
+         "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise. The Note tab and feature ledger use 4,000 paths. Greeks, events, and the ladder use the first 1,600 of that same array. The dealer-offer stack uses that prefix for both its mid and its charges, so the rows add — it is not a 4,000-path mid minus 1,600-path diffs."),
         ("One flat volatility per name — unless you turn local vol on",
          "Default: every option on a name is priced at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits — that is the skew charge. The optional local-vol toggle puts a one-parameter leverage function in the paths (σ rises as the name trades down). A desk Dupire surface is calibrated to listed options and is time-dependent; this is a cartoon so a barrier can see a smile instead of only a charge."),
         ("Correlation is one number — unless you turn crash corr on",
@@ -1243,10 +1243,13 @@ public struct DeskView: View {
 
     @ViewBuilder
     private var offerCard: some View {
-        if spec.chargesOn, let r = result {
+        if spec.chargesOn {
             Card(title: "Dealer offer build-up", help: Teach.blockHelp("offer")) {
-                LegRow(label: spec.localVolOn ? "Model mid (local vol)" : "Model mid (flat vol)", value: Fmt.pct(r.value, 2))
                 if let ch = charges {
+                    let midLabel = spec.localVolOn
+                        ? "Model mid (local vol, \(ch.paths.formatted())-path CRN prefix)"
+                        : "Model mid (\(ch.paths.formatted())-path CRN prefix)"
+                    LegRow(label: midLabel, value: Fmt.pct(ch.mid, 2))
                     if ch.skew > 0.0002 { LegRow(label: "− skew: downside leg at strike vol", value: "−" + Fmt.pct(ch.skew, 2), color: Theme.loss) }
                     if ch.overhedge > 0.0002 { LegRow(label: "− overhedge: barriers shifted \(Fmt.pct(spec.barrierShift))", value: "−" + Fmt.pct(ch.overhedge, 2), color: Theme.loss) }
                     if ch.corrBA > 0.0002 { LegRow(label: "− correlation bid-ask ±\(String(format: "%.2f", spec.corrBA))", value: "−" + Fmt.pct(ch.corrBA, 2), color: Theme.loss) }
@@ -1266,7 +1269,7 @@ public struct DeskView: View {
                         LegRow(label: "Structuring margin (proceeds − offer)",
                                value: Fmt.pct(max(1 - spec.ufFee - ch.offer, 0), 2), color: Theme.bond)
                     }
-                    Text("This is the number that becomes the term sheet's estimated value — the model mid less the desk's cost of hedging what it cannot replicate. Charge diffs are the \(Engine.fastPaths.formatted())-path CRN prefix of the headline array, subtracted from the \(Engine.fullPaths.formatted())-path mid. Coupon-to-par with charges on solves on that same prefix so the offer and the solver never mix path counts.")
+                    Text("This stack is internally consistent: mid and every charge share the \(ch.paths.formatted())-path CRN prefix of the headline array, so the rows add. The Note-tab headline is \(Engine.fullPaths.formatted()) of the same array and can sit a hair off this mid. Coupon-to-par with charges on prints this offer at par. UF sits below the offer and does not change the option package.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 } else {
                     ProgressView("Building the charge stack…").font(.footnote)
@@ -1416,7 +1419,7 @@ public struct DeskView: View {
     private var workCard: some View {
         Card(title: "The work — every number, derived") {
             if let r = result {
-                Text("Nothing below is asserted. The mid identity is computed from the same \(Engine.fullPaths.formatted()) simulated paths, and the formula is printed with its numbers already substituted so you can check it by hand. If charges are on, the offer stack is \(Engine.fastPaths.formatted())-path CRN-prefix diffs subtracted from that \(Engine.fullPaths.formatted())-path mid.")
+                Text("Nothing below is asserted. The mid identity is computed from the same \(Engine.fullPaths.formatted()) simulated paths, and the formula is printed with its numbers already substituted so you can check it by hand. If charges are on, the offer stack is a separate identity on the \(Engine.fastPaths.formatted())-path CRN prefix — that mid minus those diffs, not the \(Engine.fullPaths.formatted())-path headline minus \(Engine.fastPaths.formatted())-path charges.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(mathSteps(r)) { step in
@@ -1534,7 +1537,7 @@ public struct DeskView: View {
             "The legs add to the total with no residual, because every one of them was averaged over the same set of simulated paths. That is what reusing one fixed set of random draws buys you: an identity you can check on paper instead of a black box you have to trust.")
 
         if spec.chargesOn, let ch = charges {
-            var line = String(format: "offer = mid %.2f", r.value * 100)
+            var line = String(format: "offer = mid %.2f", ch.mid * 100)
             if ch.skew > 0.0002 { line += String(format: " − skew %.2f", ch.skew * 100) }
             if ch.overhedge > 0.0002 { line += String(format: " − overhedge %.2f", ch.overhedge * 100) }
             if ch.corrBA > 0.0002 { line += String(format: " − corr %.2f", ch.corrBA * 100) }
@@ -1546,7 +1549,7 @@ public struct DeskView: View {
                     ? String(format: "issuer net at par = 100 − UF %.2f = %.2f · structuring margin %.2f",
                              spec.ufFee * 100, (1 - spec.ufFee) * 100, max(1 - spec.ufFee - ch.offer, 0) * 100)
                     : "no selling concession applied"],
-                "The mid is frictionless and untradeable. Each subtraction is a real cost of hedging something the model cannot replicate — the volatility skew at the barrier strike, barriers and digitals that can only be approximated, correlation that has no clean hedge. Those diffs are the \(Engine.fastPaths.formatted())-path CRN prefix of the headline array, applied to the \(Engine.fullPaths.formatted())-path mid. The result is the number that appears on a term sheet as the estimated value, and the gap to par is not a markup but the price of the hedge plus distribution.")
+                "This offer identity uses the \(ch.paths.formatted())-path CRN prefix, not the \(Engine.fullPaths.formatted())-path Note-tab mid above. Mid and every charge share that prefix, so the rows add. Each subtraction is a real cost of hedging something the model cannot replicate — the volatility skew at the barrier strike, barriers and digitals that can only be approximated, correlation that has no clean hedge. The result is the number that appears on a term sheet as the estimated value, and the gap to par is not a markup but the price of the hedge plus distribution.")
         }
 
         let readback: String
@@ -1992,7 +1995,7 @@ public struct DeskView: View {
                     guard Self.pricingGate.current() == myGen else {
                         cont.resume(returning: nil); return
                     }
-                    let ch = Engine.charges(snapshot, midValue: r.value, vega: g.vega)
+                    let ch = Engine.charges(snapshot, vega: g.vega)
                     guard Self.pricingGate.current() == myGen else {
                         cont.resume(returning: nil); return
                     }

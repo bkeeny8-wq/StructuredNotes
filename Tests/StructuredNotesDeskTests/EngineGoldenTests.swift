@@ -511,8 +511,7 @@ final class EngineGoldenTests: XCTestCase {
         s.protection = 0.60
         s.chargesOn = true
         s.localVolOn = true
-        let mid = Engine.price(s, paths: 200)
-        let ch = Engine.charges(s, midValue: mid.value, vega: 0)
+        let ch = Engine.charges(s, vega: 0)
         XCTAssertEqual(ch.skew, 0, accuracy: 1e-12)
     }
 
@@ -845,12 +844,16 @@ final class EngineGoldenTests: XCTestCase {
         s.protection = 0.60
         s.chargesOn = true
         let mid = Engine.price(s, paths: Engine.fastPaths).value
-        let a = Engine.charges(s, midValue: mid, vega: 0)
-        let b = Engine.charges(s, midValue: mid, vega: 0, paths: Engine.fastPaths)
+        let a = Engine.charges(s, vega: 0)
+        let b = Engine.charges(s, vega: 0, paths: Engine.fastPaths)
         XCTAssertEqual(a.skew, b.skew, accuracy: 1e-12)
         XCTAssertEqual(a.overhedge, b.overhedge, accuracy: 1e-12)
         XCTAssertEqual(a.total, b.total, accuracy: 1e-12)
         XCTAssertEqual(a.offer, b.offer, accuracy: 1e-12)
+        XCTAssertEqual(a.mid, b.mid, accuracy: 1e-12)
+        XCTAssertEqual(a.mid, mid, accuracy: 1e-12)
+        XCTAssertEqual(a.offer, a.mid - a.total, accuracy: 1e-12)
+        XCTAssertEqual(a.paths, Engine.fastPaths)
     }
 
     func testSensitivitiesDefaultMatchesExplicitFastPaths() {
@@ -896,10 +899,41 @@ final class EngineGoldenTests: XCTestCase {
         s.couponRate = c
         let r = Engine.price(s, paths: n)
         let g = Engine.sensitivities(s, mark: r.value, paths: n)
-        let ch = Engine.charges(s, midValue: r.value, vega: g.vega, paths: n)
+        let ch = Engine.charges(s, vega: g.vega, paths: n)
+        XCTAssertEqual(ch.mid, r.value, accuracy: 1e-12)
+        XCTAssertEqual(ch.offer, ch.mid - ch.total, accuracy: 1e-12)
+        XCTAssertEqual(ch.paths, n)
         XCTAssertEqual(ch.offer, 1.0, accuracy: 1e-5)
         XCTAssertGreaterThan(c, 0.01)
         XCTAssertLessThan(c, 0.25)
+    }
+
+    func testOfferUsesSamePathMidNotHeadline() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = true
+        let n = 80
+        let prefix = Engine.price(s, paths: n).value
+        let head = Engine.price(s, paths: Engine.fullPaths).value
+        let g = Engine.sensitivities(s, mark: prefix, paths: n)
+        let ch = Engine.charges(s, vega: g.vega, paths: n)
+        XCTAssertEqual(ch.paths, n)
+        XCTAssertEqual(ch.mid, prefix, accuracy: 1e-12)
+        XCTAssertEqual(ch.offer, ch.mid - ch.total, accuracy: 1e-12)
+        XCTAssertNotEqual(head, prefix, accuracy: 1e-6)
+        XCTAssertNotEqual(ch.offer, head - ch.total, accuracy: 1e-6)
+        XCTAssertGreaterThan(ch.total, 0)
+    }
+
+    func testChargesOffStackIsZero() {
+        var s = Instrument.initial
+        s.chargesOn = false
+        let ch = Engine.charges(s, vega: 0.01)
+        XCTAssertEqual(ch.total, 0, accuracy: 1e-12)
+        XCTAssertEqual(ch.offer, 0, accuracy: 1e-12)
+        XCTAssertEqual(ch.mid, 0, accuracy: 1e-12)
+        XCTAssertEqual(ch.paths, Engine.fastPaths)
     }
 
     func testMonteCarloGlossaryNamesBumpPrefix() {
@@ -911,6 +945,9 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertTrue(mc?.desk.contains("4,000") ?? false || mc?.desk.contains("Four thousand") ?? false)
         let crn = Teach.glossary.first { $0.name == "Common random numbers" }
         XCTAssertTrue(crn?.desk.localizedCaseInsensitiveContains("prefix") ?? false)
+        let ev = Teach.glossary.first { $0.name == "Estimated value" }
+        XCTAssertTrue(ev?.desk.contains("1,600") ?? false)
+        XCTAssertTrue(ev?.desk.contains("4,000") ?? false)
     }
 
     func testIssuerEventCaptionNamesCRNPrefixNotHeadline() {
