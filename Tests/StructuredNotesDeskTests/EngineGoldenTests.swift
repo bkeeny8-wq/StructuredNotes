@@ -838,4 +838,92 @@ final class EngineGoldenTests: XCTestCase {
         XCTAssertTrue(back?.markSpot.isEmpty ?? false)
         XCTAssertEqual(back?.atmVol(for: "SPX") ?? 0, Market.asset("SPX").vol, accuracy: 1e-12)
     }
+
+    func testChargesDefaultMatchesExplicitFastPaths() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = true
+        let mid = Engine.price(s, paths: Engine.fastPaths).value
+        let a = Engine.charges(s, midValue: mid, vega: 0)
+        let b = Engine.charges(s, midValue: mid, vega: 0, paths: Engine.fastPaths)
+        XCTAssertEqual(a.skew, b.skew, accuracy: 1e-12)
+        XCTAssertEqual(a.overhedge, b.overhedge, accuracy: 1e-12)
+        XCTAssertEqual(a.total, b.total, accuracy: 1e-12)
+        XCTAssertEqual(a.offer, b.offer, accuracy: 1e-12)
+    }
+
+    func testSensitivitiesDefaultMatchesExplicitFastPaths() {
+        var s = Instrument.initial
+        s.downside = .kiPut
+        s.protection = 0.60
+        let mark = Engine.price(s, paths: Engine.fullPaths).value
+        let a = Engine.sensitivities(s, mark: mark)
+        let b = Engine.sensitivities(s, mark: mark, paths: Engine.fastPaths)
+        XCTAssertEqual(a.delta, b.delta, accuracy: 1e-12)
+        XCTAssertEqual(a.vega, b.vega, accuracy: 1e-12)
+        XCTAssertEqual(a.mark, mark, accuracy: 1e-12)
+        XCTAssertEqual(b.mark, mark, accuracy: 1e-12)
+    }
+
+    func testCouponForParPathCountPicksHeadlineWhenLinear() {
+        var linear = guaranteedNote()
+        linear.chargesOn = false
+        linear.call = .none
+        XCTAssertEqual(Engine.couponForParPathCount(linear), Engine.fullPaths)
+
+        var charged = linear
+        charged.chargesOn = true
+        XCTAssertEqual(Engine.couponForParPathCount(charged), Engine.fastPaths)
+
+        var issuer = linear
+        issuer.call = .issuerCall
+        XCTAssertEqual(Engine.couponForParPathCount(issuer), Engine.fastPaths)
+    }
+
+    func testCouponForParChargesOnOfferIsParAtSolverPathCount() {
+        var s = guaranteedNote(rate: 0.12)
+        s.downside = .kiPut
+        s.protection = 0.60
+        s.chargesOn = true
+        s.call = .none
+        let n = 80
+        XCTAssertNotEqual(n, Engine.fastPaths)
+        XCTAssertNotEqual(n, Engine.fullPaths)
+        guard let c = Engine.couponForPar(s, paths: n) else {
+            return XCTFail("solver returned nil")
+        }
+        s.couponRate = c
+        let r = Engine.price(s, paths: n)
+        let g = Engine.sensitivities(s, mark: r.value, paths: n)
+        let ch = Engine.charges(s, midValue: r.value, vega: g.vega, paths: n)
+        XCTAssertEqual(ch.offer, 1.0, accuracy: 1e-5)
+        XCTAssertGreaterThan(c, 0.01)
+        XCTAssertLessThan(c, 0.25)
+    }
+
+    func testMonteCarloGlossaryNamesBumpPrefix() {
+        let mc = Teach.glossary.first { $0.name == "Monte Carlo" }
+        XCTAssertNotNil(mc)
+        XCTAssertTrue(mc?.desk.contains("1,600") ?? false)
+        XCTAssertTrue(mc?.desk.localizedCaseInsensitiveContains("prefix") ?? false
+                      || mc?.desk.contains("first 1,600") ?? false)
+        XCTAssertTrue(mc?.desk.contains("4,000") ?? false || mc?.desk.contains("Four thousand") ?? false)
+        let crn = Teach.glossary.first { $0.name == "Common random numbers" }
+        XCTAssertTrue(crn?.desk.localizedCaseInsensitiveContains("prefix") ?? false)
+    }
+
+    func testIssuerEventCaptionNamesCRNPrefixNotHeadline() {
+        var s = Instrument.initial
+        s.call = .issuerCall
+        s.callObs = .quarterly
+        s.nonCallMonths = 6
+        s.chargesOn = false
+        let ev = Engine.eventScenarios(s)
+        let issuer = ev.first { $0.title.localizedCaseInsensitiveContains("issuer") }
+        XCTAssertNotNil(issuer)
+        XCTAssertTrue(issuer?.caption.contains("not a 100% trigger") ?? false)
+        XCTAssertTrue(issuer?.caption.localizedCaseInsensitiveContains("prefix") ?? false)
+        XCTAssertFalse(issuer?.caption.contains("same paths as the mark") ?? true)
+    }
 }

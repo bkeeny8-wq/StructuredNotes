@@ -321,9 +321,10 @@ public struct DeskView: View {
                     let snapshot = spec
                     pricing = true
                     Task.detached(priority: .userInitiated) {
+                        let n = Engine.couponForParPathCount(snapshot)
                         let c = await withCheckedContinuation { cont in
                             Self.mcQueue.async {
-                                cont.resume(returning: Engine.couponForPar(snapshot))
+                                cont.resume(returning: Engine.couponForPar(snapshot, paths: n))
                             }
                         }
                         await MainActor.run {
@@ -333,17 +334,14 @@ public struct DeskView: View {
                                     if s.snowball { s.snowballRate = c } else { s.couponRate = c }
                                 }
                                 solverNote = {
-                                    var msg = snapshot.chargesOn
-                                        ? "Set so the dealer offer prints at par (charges held at the current stack, then refreshed)."
-                                        : "Set so the model mid prints at par"
-                                    if snapshot.call == .issuerCall {
-                                        msg += snapshot.chargesOn
-                                            ? " Issuer exercise depends on the coupon, so this is a bracketed root finder on the quote, not a single Q shot."
-                                            : ". Issuer exercise depends on the coupon, so this is a bracketed root finder on the mid, not a single Q shot."
-                                    } else if !snapshot.chargesOn {
-                                        msg += " — exact via Q on this schedule."
+                                    let bump = "the \(Engine.fastPaths.formatted())-path CRN prefix (same set as Greeks and charges)"
+                                    if snapshot.chargesOn {
+                                        return "Set so the dealer offer prints at par on \(bump), then refreshed. Mid, vega, and the charge stack share that count — they never mix \(Engine.fastPaths.formatted()) with \(Engine.fullPaths.formatted()). The \(Engine.fullPaths.formatted())-path headline can sit a hair off par."
                                     }
-                                    return msg
+                                    if snapshot.call == .issuerCall {
+                                        return "Set so the model mid prints at par on \(bump). Issuer exercise depends on the coupon, so this is a bracketed root finder on the mid, not a single Q shot. The \(Engine.fullPaths.formatted())-path headline can sit a hair off par."
+                                    }
+                                    return "Set so the model mid prints at par on the \(Engine.fullPaths.formatted())-path headline — exact via Q on this schedule."
                                 }()
                             } else {
                                 solverNote = "No coupon dates survive on this build, so there is no rate that prints par."
@@ -356,9 +354,13 @@ public struct DeskView: View {
                         .font(.system(size: 12, weight: .semibold))
                 }
                 .buttonStyle(.bordered).tint(Theme.bond)
-                Text(solverNote ?? (spec.call == .issuerCall
-                    ? "Solves the coupon so the quote prints at par. Issuer exercise depends on the coupon, so this is a bracketed root finder rather than a single Q shot."
-                    : "Solves the coupon so the dealer offer prints at par (model mid, if charges are off). Linear in Q on the live calendar, so the mid identity is exact."))
+                Text(solverNote ?? {
+                    let bump = "the \(Engine.fastPaths.formatted())-path CRN prefix (same set as Greeks and charges)"
+                    if spec.call == .issuerCall || spec.chargesOn {
+                        return "Solves the coupon so the quote prints at par on \(bump). Issuer LS or charges make the quote nonlinear, so this is a bracketed root finder rather than a single Q shot. The \(Engine.fullPaths.formatted())-path headline can sit a hair off par."
+                    }
+                    return "Solves the coupon so the model mid prints at par on the same \(Engine.fullPaths.formatted()) CRN paths as the Note tab. Linear in Q on the live calendar, so the mid identity is exact."
+                }())
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
@@ -829,7 +831,7 @@ public struct DeskView: View {
                 .padding(.vertical, 3)
                 .overlay(Rectangle().frame(height: 0.5).foregroundStyle(Theme.rule), alignment: .bottom)
             }
-            Text("Every number above is a re-price of the same note with one input nudged and the terms held frozen. That is all a Greek is: the same instrument, priced twice.")
+            Text("Every number above is a re-price of the same note with one input nudged and the terms held frozen. That is all a Greek is: the same instrument, priced twice. The diffs use the \(Engine.fastPaths.formatted())-path CRN prefix of the headline array; the displayed mark is the \(Engine.fullPaths.formatted())-path Note-tab level so the level and the diffs never disagree.")
                 .font(.system(size: 10.5)).foregroundStyle(.secondary)
         }
     }
@@ -854,7 +856,7 @@ public struct DeskView: View {
 
     private static let assumptionRows: [(String, String)] = [
         ("Simulation, not a formula",
-         "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise."),
+         "Thousands of possible market paths are generated, the note's payoff is computed on each, and the results are averaged and discounted. There is no closed-form price for a path-dependent note, so this is what every desk does. Common random numbers are reused across calculations so that the difference between two builds is a real economic difference rather than sampling noise. The Note tab and feature ledger use 4,000 paths. Greeks, charges, events, and the ladder use the first 1,600 of that same array — a cheaper CRN prefix, not a second random set."),
         ("One flat volatility per name — unless you turn local vol on",
          "Default: every option on a name is priced at a single volatility. Real markets charge more for out-of-the-money puts, which is exactly where a knock-in barrier sits — that is the skew charge. The optional local-vol toggle puts a one-parameter leverage function in the paths (σ rises as the name trades down). A desk Dupire surface is calibrated to listed options and is time-dependent; this is a cartoon so a barrier can see a smile instead of only a charge."),
         ("Correlation is one number — unless you turn crash corr on",
@@ -1264,7 +1266,7 @@ public struct DeskView: View {
                         LegRow(label: "Structuring margin (proceeds − offer)",
                                value: Fmt.pct(max(1 - spec.ufFee - ch.offer, 0), 2), color: Theme.bond)
                     }
-                    Text("This is the number that becomes the term sheet's estimated value — the model mid less the desk's cost of hedging what it cannot replicate.")
+                    Text("This is the number that becomes the term sheet's estimated value — the model mid less the desk's cost of hedging what it cannot replicate. Charge diffs are the \(Engine.fastPaths.formatted())-path CRN prefix of the headline array, subtracted from the \(Engine.fullPaths.formatted())-path mid. Coupon-to-par with charges on solves on that same prefix so the offer and the solver never mix path counts.")
                         .font(.system(size: 10)).foregroundStyle(.secondary)
                 } else {
                     ProgressView("Building the charge stack…").font(.footnote)
@@ -1414,7 +1416,7 @@ public struct DeskView: View {
     private var workCard: some View {
         Card(title: "The work — every number, derived") {
             if let r = result {
-                Text("Nothing below is asserted. Each step is computed from the same \(Engine.fullPaths.formatted()) simulated paths, and the formula is printed with its numbers already substituted so you can check it by hand.")
+                Text("Nothing below is asserted. The mid identity is computed from the same \(Engine.fullPaths.formatted()) simulated paths, and the formula is printed with its numbers already substituted so you can check it by hand. If charges are on, the offer stack is \(Engine.fastPaths.formatted())-path CRN-prefix diffs subtracted from that \(Engine.fullPaths.formatted())-path mid.")
                     .font(.system(size: 11.5)).foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
                 ForEach(mathSteps(r)) { step in
@@ -1544,7 +1546,7 @@ public struct DeskView: View {
                     ? String(format: "issuer net at par = 100 − UF %.2f = %.2f · structuring margin %.2f",
                              spec.ufFee * 100, (1 - spec.ufFee) * 100, max(1 - spec.ufFee - ch.offer, 0) * 100)
                     : "no selling concession applied"],
-                "The mid is frictionless and untradeable. Each subtraction is a real cost of hedging something the model cannot replicate — the volatility skew at the barrier strike, barriers and digitals that can only be approximated, correlation that has no clean hedge. The result is the number that appears on a term sheet as the estimated value, and the gap to par is not a markup but the price of the hedge plus distribution.")
+                "The mid is frictionless and untradeable. Each subtraction is a real cost of hedging something the model cannot replicate — the volatility skew at the barrier strike, barriers and digitals that can only be approximated, correlation that has no clean hedge. Those diffs are the \(Engine.fastPaths.formatted())-path CRN prefix of the headline array, applied to the \(Engine.fullPaths.formatted())-path mid. The result is the number that appears on a term sheet as the estimated value, and the gap to par is not a markup but the price of the hedge plus distribution.")
         }
 
         let readback: String
@@ -1629,14 +1631,14 @@ public struct DeskView: View {
                         if !isCompact {
                             StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
                                      sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
-                            StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                            StatCard(title: "Paths", value: Engine.fastPaths.formatted(), sub: "CRN prefix of \(Engine.fullPaths.formatted())")
                         }
                     }
                     if isCompact {
                         HStack(spacing: 8) {
                             StatCard(title: "Theta (1m)", value: String(format: "%+.2f", g.theta1m * notional),
                                      sub: "terms frozen", color: g.theta1m >= 0 ? Theme.bond : Theme.loss)
-                            StatCard(title: "Paths", value: Engine.fullPaths.formatted(), sub: "CRN · fixed seed")
+                            StatCard(title: "Paths", value: Engine.fastPaths.formatted(), sub: "CRN prefix of \(Engine.fullPaths.formatted())")
                         }
                     }
                 }
@@ -1675,7 +1677,7 @@ public struct DeskView: View {
                     }
                     .padding(.vertical, 3)
                 }
-                Text("Each row bumps that name alone, the others held flat — where the hedge actually trades. Worst-of loads the highest-vol name; totals ≈ the parallel bump up to cross terms.")
+                Text("Each row bumps that name alone, the others held flat — where the hedge actually trades. Worst-of loads the highest-vol name; totals ≈ the parallel bump up to cross terms. Same \(Engine.fastPaths.formatted())-path CRN prefix as the Greeks, not the \(Engine.fullPaths.formatted())-path headline.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             } else {
                 HStack {
@@ -1715,7 +1717,7 @@ public struct DeskView: View {
                         .frame(width: 150, alignment: .trailing)
                 }
                 .padding(.vertical, 3)
-                Text("Each row bumps that name alone, the others held flat — where the hedge actually trades. Worst-of loads the highest-vol name; totals ≈ the parallel bump up to cross terms.")
+                Text("Each row bumps that name alone, the others held flat — where the hedge actually trades. Worst-of loads the highest-vol name; totals ≈ the parallel bump up to cross terms. Same \(Engine.fastPaths.formatted())-path CRN prefix as the Greeks, not the \(Engine.fullPaths.formatted())-path headline.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }
@@ -1809,8 +1811,8 @@ public struct DeskView: View {
                 .chartYAxisLabel("Delta $/1k")
                 .frame(height: 100)
                 Text(spec.call == .autocall
-                     ? "The cliff, the flattening, the pins — red bars mark where hedges die: the barrier zone and the trigger."
-                     : "The cliff, the flattening, the pins — red bars mark where hedges die at the barrier. Issuer call is not a 100% trigger, so there is no autocall pin on this chart.")
+                     ? "The cliff, the flattening, the pins — red bars mark where hedges die: the barrier zone and the trigger. Charted on the \(Engine.fastPaths.formatted())-path CRN prefix, not the \(Engine.fullPaths.formatted())-path headline."
+                     : "The cliff, the flattening, the pins — red bars mark where hedges die at the barrier. Issuer call is not a 100% trigger, so there is no autocall pin on this chart. Charted on the \(Engine.fastPaths.formatted())-path CRN prefix, not the \(Engine.fullPaths.formatted())-path headline.")
                     .font(.system(size: 10)).foregroundStyle(.secondary)
             }
         }

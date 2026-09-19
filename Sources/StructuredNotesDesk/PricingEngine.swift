@@ -123,9 +123,22 @@ struct SplitMix64 {
 
 public enum Engine {
 
+    /// Headline Monte Carlo size — Note tab, outcomes, feature ledger.
     public static let fullPaths = 4000
+    /// Cheaper CRN prefix of `fullPaths` for Greeks, charges, events, the
+    /// spot ladder, per-name hedges, and coupon-to-par when the quote is
+    /// nonlinear (issuer LS or charges on). Paths `0..<fastPaths` reuse the
+    /// same normals/uniforms as the headline — not a second random set —
+    /// so bump diffs are sampling-noise-free on that prefix. Live UI keeps
+    /// this size so iPad reprice stays interactive. Coupon-to-par with
+    /// charges on uses this count for mid, vega, *and* the charge stack;
+    /// it never subtracts a 1,600-path offer from a 4,000-path mid.
     public static let fastPaths = 1600
     public static let maxAssets = 4
+
+    static func clampedPathCount(_ paths: Int) -> Int {
+        min(max(paths, 1), fullPaths)
+    }
     static let maxSlotsPerPath = 108   // 84 monthly steps + 21 daily fixings + slack
     static let seed: UInt64 = 20260720
 
@@ -444,6 +457,7 @@ public enum Engine {
                          spotScale: Double = 1, volBump: Double = 0,
                          bumpAsset: Int? = nil,
                          paths: Int = fullPaths) -> SimOut {
+        let paths = clampedPathCount(paths)
         let assets = Market.assets(for: s.members)
         let nA = min(assets.count, maxAssets)
         let c = s.coupon == .none ? 0 : s.couponRate
@@ -924,8 +938,13 @@ public enum Engine {
     /// exercise *does* depend on the coupon — Q changes at the call boundary —
     /// so that case (and charges-on) uses a bracketed Illinois root finder on
     /// quote(c) − 1 = 0 rather than a fixed number of Q-style iterates.
+    /// Default path count is the cheaper CRN prefix (`fastPaths`) so a
+    /// many-iterate solve stays interactive; the live button uses
+    /// `fullPaths` when one Q shot is enough. Mid, vega, and charges always
+    /// share this same `paths` — never a 4,000-path mid minus a 1,600-path stack.
     public static func couponForPar(_ s: Instrument, paths: Int = fastPaths) -> Double? {
         guard s.coupon != .none else { return nil }
+        let paths = clampedPathCount(paths)
 
         func quoted(_ c: Double) -> Double? {
             var t = s
@@ -934,8 +953,8 @@ public enum Engine {
             let r = price(t, paths: paths)
             guard r.qFactor > 1e-8 else { return nil }
             if t.chargesOn {
-                let g = sensitivities(t, mark: r.value)
-                let ch = charges(t, midValue: r.value, vega: g.vega)
+                let g = sensitivities(t, mark: r.value, paths: paths)
+                let ch = charges(t, midValue: r.value, vega: g.vega, paths: paths)
                 return ch.offer
             }
             return r.value
@@ -961,6 +980,12 @@ public enum Engine {
         return illinoisRoot(lo: 0, hi: 0.25, flo: vLo - 1, fhi: vHi - 1, ftol: ftol) { c in
             quoted(c).map { $0 - 1 }
         }
+    }
+
+    /// Live coupon-to-par path count: headline size when one Q shot is
+    /// enough, cheaper CRN prefix when the quote is nonlinear.
+    public static func couponForParPathCount(_ s: Instrument) -> Int {
+        (s.call == .issuerCall || s.chargesOn) ? fastPaths : fullPaths
     }
 
     /// Illinois regula falsi on a sign-changing bracket. Falls back to
@@ -1001,35 +1026,40 @@ public enum Engine {
 }
 
     /// Bump each member alone, the others held flat — the hedge sheet.
-    public static func perAssetRisk(_ s: Instrument) -> [AssetRisk] {
-        s.members.enumerated().map { (j, tkr) in
-            let dU = simulate(s, spotScale: 1.01, bumpAsset: j, paths: fastPaths).pv
-            let dD = simulate(s, spotScale: 0.99, bumpAsset: j, paths: fastPaths).pv
-            let vU = simulate(s, volBump: 0.01, bumpAsset: j, paths: fastPaths).pv
-            let vD = simulate(s, volBump: -0.01, bumpAsset: j, paths: fastPaths).pv
+    /// Default is the cheaper CRN prefix of the headline array.
+    public static func perAssetRisk(_ s: Instrument, paths: Int = fastPaths) -> [AssetRisk] {
+        let n = clampedPathCount(paths)
+        return s.members.enumerated().map { (j, tkr) in
+            let dU = simulate(s, spotScale: 1.01, bumpAsset: j, paths: n).pv
+            let dD = simulate(s, spotScale: 0.99, bumpAsset: j, paths: n).pv
+            let vU = simulate(s, volBump: 0.01, bumpAsset: j, paths: n).pv
+            let vD = simulate(s, volBump: -0.01, bumpAsset: j, paths: n).pv
             return AssetRisk(ticker: tkr, delta: (dU - dD) / 0.02, vega: (vU - vD) / 2)
         }
     }
 
-    /// Greeks from fast-path CRN diffs; the headline mark (full paths) is
-    /// passed in so the displayed level and the diffs never disagree.
-    public static func sensitivities(_ s: Instrument, mark: Double) -> Sensitivities {
-        let f: (Double, Double) -> Double = { simulate(s, spotScale: $0, volBump: $1, paths: fastPaths).pv }
+    /// Greeks from CRN-prefix diffs (default `fastPaths` = first 1,600 of the
+    /// 4,000-path headline array). The headline mark is passed in so the
+    /// displayed level (full paths) and the diffs never disagree.
+    public static func sensitivities(_ s: Instrument, mark: Double,
+                                     paths: Int = fastPaths) -> Sensitivities {
+        let n = clampedPathCount(paths)
+        let f: (Double, Double) -> Double = { simulate(s, spotScale: $0, volBump: $1, paths: n).pv }
         let base = f(1, 0)
         let up = f(1.01, 0), dn = f(0.99, 0)
         var corr = 0.0
         if s.members.count > 1 {
             var s2 = s; s2.correlation = min(0.99, s.correlation + 0.05)
-            corr = simulate(s2, paths: fastPaths).pv - base
+            corr = simulate(s2, paths: n).pv - base
         }
         var s3 = s; s3.spreadShort += 0.001; s3.spreadLong += 0.001
-        let fdv = simulate(s3, paths: fastPaths).pv - base
+        let fdv = simulate(s3, paths: n).pv - base
         // A 1-month note cannot roll a further month (the max(1/12, T−1/12)
         // clamp is a no-op). Age a week instead so pull-to-par still shows.
         let month = 1.0 / 12.0
         let thetaBump = s.termYears > month + 1e-9 ? month : min(s.termYears * 0.5, 7.0 / 365.0)
         var s4 = s; s4.termYears = max(1.0 / 365.0, s.termYears - thetaBump)
-        let theta = simulate(s4, paths: fastPaths).pv - base
+        let theta = simulate(s4, paths: n).pv - base
         return Sensitivities(mark: mark, delta: (up - dn) / 0.02, gamma: up + dn - 2 * base,
                              vega: (f(1, 0.01) - f(1, -0.01)) / 2,
                              corr: corr, fundingDV: fdv, theta1m: theta)
@@ -1041,18 +1071,23 @@ public enum Engine {
     /// takes the adverse side of a ±Δρ band; vega bid-ask charges |vega|;
     /// rebalancing/gap/model risk sit in the flat reserve. All diffs use the
     /// same normal array (CRN), so they are clean of sampling noise.
-    public static func charges(_ s: Instrument, midValue: Double, vega: Double) -> ChargeStack {
+    /// Default `paths` is the 1,600-path CRN prefix; pass the solver's path
+    /// count when this stack is part of coupon-to-par so mid and offer
+    /// never silently mix 1,600 and 4,000.
+    public static func charges(_ s: Instrument, midValue: Double, vega: Double,
+                               paths: Int = fastPaths) -> ChargeStack {
         guard s.chargesOn else {
             return ChargeStack(skew: 0, overhedge: 0, corrBA: 0, vegaBA: 0,
                                reserve: 0, total: 0, offer: midValue)
         }
-        let baseF = simulate(s, paths: fastPaths)
+        let n = clampedPathCount(paths)
+        let baseF = simulate(s, paths: n)
         var skew = 0.0
         // Local vol already puts the smile in the paths; charging skew on top
         // would double-count. Flat-vol mids still use the strike-vol charge.
         if s.downside != .par && !s.localVolOn {
             let extra = s.skewSlope * (1 - s.protection) * 10
-            let wing = simulate(s, volBump: extra, paths: fastPaths)
+            let wing = simulate(s, volBump: extra, paths: n)
             skew = max(wing.lossPV - baseF.lossPV, 0)
         }
         var s2 = s
@@ -1062,13 +1097,13 @@ public enum Engine {
         if s2.secondChance { s2.secondChanceLevel += s.barrierShift }
         if s2.upside == .digital || s2.upside == .digitalPlus { s2.digitalStrike += s.barrierShift }
         if s2.upside == .absolute { s2.absoluteKO += s.barrierShift }
-        let over = max(baseF.pv - simulate(s2, paths: fastPaths).pv, 0)
+        let over = max(baseF.pv - simulate(s2, paths: n).pv, 0)
         var corr = 0.0
         if s.members.count > 1 {
             var lo = s, hi = s
             lo.correlation = max(0.0, s.correlation - s.corrBA)
             hi.correlation = min(0.99, s.correlation + s.corrBA)
-            let adverse = min(simulate(lo, paths: fastPaths).pv, simulate(hi, paths: fastPaths).pv)
+            let adverse = min(simulate(lo, paths: n).pv, simulate(hi, paths: n).pv)
             corr = max(baseF.pv - adverse, 0)
         }
         let vba = abs(vega) * s.volBA * 100
@@ -1078,10 +1113,11 @@ public enum Engine {
                            reserve: res, total: total, offer: midValue - total)
     }
 
-    public static func spotLadder(_ s: Instrument) -> [LadderRow] {
-        [0.55, 0.65, 0.75, 0.85, 0.95, 1.0, 1.1, 1.2].map { lvl in
-            let mk = simulate(s, spotScale: lvl, paths: fastPaths).pv
-            let up = simulate(s, spotScale: lvl * 1.01, paths: fastPaths).pv
+    public static func spotLadder(_ s: Instrument, paths: Int = fastPaths) -> [LadderRow] {
+        let n = clampedPathCount(paths)
+        return [0.55, 0.65, 0.75, 0.85, 0.95, 1.0, 1.1, 1.2].map { lvl in
+            let mk = simulate(s, spotScale: lvl, paths: n).pv
+            let up = simulate(s, spotScale: lvl * 1.01, paths: n).pv
             return LadderRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
         }
     }
@@ -1109,12 +1145,14 @@ public enum Engine {
 
     /// Roll the clock to the note's discontinuities and tabulate value and
     /// delta across spots bracketing the level — pin risk when it matters.
-    public static func eventScenarios(_ s: Instrument) -> [EventBlock] {
+    /// Default is the cheaper CRN prefix, not the 4,000-path headline.
+    public static func eventScenarios(_ s: Instrument, paths: Int = fastPaths) -> [EventBlock] {
+        let n = clampedPathCount(paths)
         var out: [EventBlock] = []
         func block(_ s2: Instrument, level: Double, title: String, caption: String) {
             let rows = [level - 0.04, level - 0.015, level, level + 0.015, level + 0.04].map { lvl -> ScenarioRow in
-                let mk = simulate(s2, spotScale: lvl, paths: fastPaths).pv
-                let up = simulate(s2, spotScale: lvl * 1.01, paths: fastPaths).pv
+                let mk = simulate(s2, spotScale: lvl, paths: n).pv
+                let up = simulate(s2, spotScale: lvl * 1.01, paths: n).pv
                 return ScenarioRow(spot: lvl, mark: mk, delta: (up - mk) / 0.01)
             }
             out.append(EventBlock(title: title, rows: rows, caption: caption))
@@ -1132,7 +1170,7 @@ public enum Engine {
                 + ((s.coupon != .none && s.snowball) ? s.snowballRate * tFirst : 0)
             if s.call == .issuerCall {
                 func valueAt(_ lvl: Double) -> Double {
-                    let cont = simulate(s2, spotScale: lvl, paths: fastPaths).pv
+                    let cont = simulate(s2, spotScale: lvl, paths: n).pv
                     return min(cont, calledValue)
                 }
                 let rows = [0.96, 0.985, 1.0, 1.015, 1.04].map { lvl -> ScenarioRow in
@@ -1143,12 +1181,12 @@ public enum Engine {
                 out.append(EventBlock(
                     title: "At the first call observation · issuer exercise vs redemption",
                     rows: rows,
-                    caption: "On this date the issuer compares continuation of the remaining life to redemption (par plus any call premium, plus snowball if it is on). The model calls when a small LS fit says continuation is richer — min(C, R), not a 100% trigger. Four regressors, same paths as the mark; not a desk LSMC."))
+                    caption: "On this date the issuer compares continuation of the remaining life to redemption (par plus any call premium, plus snowball if it is on). The model calls when a small LS fit says continuation is richer — min(C, R), not a 100% trigger. Four regressors on the \(n.formatted())-path CRN prefix of the headline array, not the \(fullPaths.formatted())-path live mark; not a desk LSMC."))
             } else {
                 let trigger = s.callTrigger
                 func valueAt(_ lvl: Double) -> Double {
                     if lvl >= trigger - 1e-12 { return calledValue }
-                    return simulate(s2, spotScale: lvl, paths: fastPaths).pv
+                    return simulate(s2, spotScale: lvl, paths: n).pv
                 }
                 let rows = [trigger - 0.04, trigger - 0.015, trigger,
                             trigger + 0.015, trigger + 0.04].map { lvl -> ScenarioRow in
@@ -1159,7 +1197,7 @@ public enum Engine {
                 out.append(EventBlock(
                     title: "At the first call observation · spot around the \(Int(s.callTrigger * 100))% trigger",
                     rows: rows,
-                    caption: "This is the observation date itself: at or above the trigger the note is already par (plus any call premium). Below it, the remaining life continues. Delta flips through the trigger."))
+                    caption: "This is the observation date itself: at or above the trigger the note is already par (plus any call premium). Below it, the remaining life continues on the \(n.formatted())-path CRN prefix. Delta flips through the trigger."))
             }
         }
         if s.downside == .kiPut {
@@ -1171,7 +1209,7 @@ public enum Engine {
             s3.snowball = false
             block(s3, level: s.protection,
                   title: "One month to maturity · spot around the \(Int(s.protection * 100))% KI",
-                  caption: "The cliff: delta concentrates just above the barrier and dies below it — the hardest month in the book. Coupons and calls are stripped here so the barrier is the only discontinuity.")
+                  caption: "The cliff: delta concentrates just above the barrier and dies below it — the hardest month in the book. Coupons and calls are stripped here so the barrier is the only discontinuity. Charted on the \(n.formatted())-path CRN prefix, not the \(fullPaths.formatted())-path headline.")
         }
         return out
     }

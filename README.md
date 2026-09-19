@@ -23,7 +23,7 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 - Risk tab: what the Greeks mean for a note; model limitations honesty card
 - New `Teach.swift` (teaching copy kept apart from layout)
 
-Also: pin-and-compare two builds, lesson progress, share the term sheet, solve coupon to par (calendar-correct Q). Issuer call uses a small Longstaff–Schwartz exercise (not autocall-at-100%). Optional local-vol leverage function and crash-corr spike (both default off) so a barrier can see a smile and a selloff coupling in the paths. ATM vol and spot on Underlying are a user-typed snapshot persisted with the spec — not a live feed.
+Also: pin-and-compare two builds, lesson progress, share the term sheet, solve coupon to par (calendar-correct Q). Issuer call uses a small Longstaff–Schwartz exercise (not autocall-at-100%). Optional local-vol leverage function and crash-corr spike (both default off) so a barrier can see a smile and a selloff coupling in the paths. ATM vol and spot on Underlying are a user-typed snapshot persisted with the spec — not a live feed. Headline Monte Carlo is 4,000 CRN paths; Greeks, charges, events, and the ladder use the first 1,600 of that same array.
 
 Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 

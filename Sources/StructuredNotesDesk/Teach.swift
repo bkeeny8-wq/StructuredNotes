@@ -126,7 +126,7 @@ public enum Teach {
             return BlockHelp(
                 what: "The walk from a frictionless model price down to a number a desk could actually trade, and then down again to what the issuer nets after paying the distributor.",
                 moves: "",
-                watch: "This is where a term sheet's estimated value comes from. Note where the selling concession sits: below the dealer offer, not above it. It comes out of the issuer's proceeds and does not change the option package at all.")
+                watch: "This is where a term sheet's estimated value comes from. Note where the selling concession sits: below the dealer offer, not above it. Charge diffs are the 1,600-path CRN prefix of the 4,000-path mid. Coupon-to-par with charges on solves on that same prefix so the offer and the solver never mix path counts.")
         case "outcomes":
             return BlockHelp(
                 what: "How often each ending happens across the simulated paths: called early and when, finished with a loss, or ran to maturity clean.",
@@ -139,17 +139,17 @@ public enum Teach {
                 watch: "Every sentence here is generated from the live build, so it can never drift from the actual terms. If a sentence surprises you, the build is not what you thought it was.")
         case "risk":
             return BlockHelp(
-                what: "The note priced again with one market input nudged and every contractual term held frozen. The difference is the sensitivity — that is all a Greek is.",
+                what: "The note priced again with one market input nudged and every contractual term held frozen. The difference is the sensitivity — that is all a Greek is. Diffs use the first 1,600 paths of the same CRN array as the 4,000-path headline mark.",
                 moves: "",
-                watch: "The hedge sheet underneath is the useful part: it bumps each underlying on its own, with the others held still, which is how a desk actually decides what to trade. On a worst-of the risk is rarely spread evenly.")
+                watch: "The hedge sheet underneath is the useful part: it bumps each underlying on its own, with the others held still, which is how a desk actually decides what to trade. On a worst-of the risk is rarely spread evenly. The path count on this tab is the 1,600-path prefix, not the Note-tab 4,000.")
         case "events":
             return BlockHelp(
-                what: "The clock rolled forward to the note's dangerous moments — the first call observation, and the final month before maturity — with the terms unchanged.",
+                what: "The clock rolled forward to the note's dangerous moments — the first call observation, and the final month before maturity — with the terms unchanged. Charted on the 1,600-path CRN prefix, not the 4,000-path headline.",
                 moves: "",
                 watch: "Look for the sign flip through an autocall trigger, and the near-vertical stretch just above a KI barrier. On an issuer call the chart is min(continuation, redemption), not a 100% cliff. Those are the places where hedging a note is genuinely hard, and they are invisible in today's numbers.")
         case "ladder":
             return BlockHelp(
-                what: "Value and sensitivity across a range of market levels, drawn rather than tabulated.",
+                what: "Value and sensitivity across a range of market levels, drawn rather than tabulated. Same 1,600-path CRN prefix as the Greeks — not the 4,000-path headline.",
                 moves: "",
                 watch: "Notice that sensitivity peaks between the barriers rather than at today's level. The note's fate is most uncertain there, which is exactly where its value moves fastest.")
         case "deskbook":
@@ -871,10 +871,10 @@ public enum Teach {
               desk: "Does not touch the model value at all. Sits below the dealer offer in the build-up, not above it."),
         .init(name: "Common random numbers",
               plain: "The model reuses one fixed set of random draws for every calculation, so differences between two builds are real rather than noise.",
-              desk: "CRN. Makes charge and ledger differences clean, and keeps the leg identity exact."),
+              desk: "CRN. The 1,600-path bump set is a prefix of the 4,000-path headline array, not a second draw. Makes charge, Greek, and ledger differences clean, and keeps the leg identity exact."),
         .init(name: "Monte Carlo",
               plain: "The model simulates thousands of possible market paths and averages what the note would pay on each.",
-              desk: "Risk-neutral GBM with a correlated Cholesky draw. Four thousand paths for the headline, fewer for the bumps."),
+              desk: "Risk-neutral GBM with a correlated Cholesky draw. Four thousand paths for the headline (Note tab, ledger). Greeks, charges, events, the ladder, and coupon-to-par when the quote is nonlinear use the first 1,600 of the same CRN array."),
     ]
 
     // MARK: term-sheet translation
@@ -966,5 +966,5 @@ enum TeachCopy {
     static let chargesHelp = BlockHelp(
         what: "The bridge from a model mid to a price a desk could actually trade. Five costs: skew, overhedge, correlation bid-ask, vega bid-ask, and a flat reserve — then the selling concession below that. If local vol is on, skew is skipped so the smile is not charged twice.",
         moves: "Every charge lowers the offer. Skew is normally the largest on an income note, because a flat-volatility model badly underprices a deep out-of-the-money put. Correlation only bites when there is a basket.",
-        watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated.")
+        watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated. Charge diffs are the 1,600-path CRN prefix subtracted from the 4,000-path mid; coupon-to-par with charges on solves on that same prefix.")
 }
