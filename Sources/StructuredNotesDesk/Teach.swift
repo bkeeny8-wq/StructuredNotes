@@ -74,7 +74,7 @@ public enum Teach {
             return BlockHelp(
                 what: "What the note watches. One name, or up to four in a basket. Nothing about the note's payoff refers to dollars — everything is measured as a percentage of each name's level on the pricing date.",
                 moves: "Higher volatility means a wider range of outcomes, which makes any protection you sold more valuable to the desk. A worst-of basket is the cheapest way to manufacture volatility without buying it: the worst of three names is far more likely to be down than any one of them.",
-                watch: "Add a third name and watch value fall at the same coupon. Then switch the basket from worst-of to weighted and watch it jump back. That gap is the correlation premium, and it is where most income-note coupons come from.")
+                watch: "Add a third name and watch value fall at the same coupon. Then switch the basket from worst-of to weighted and watch it jump back. That gap is the correlation premium. Local vol and crash corr are off by default; turn them on to put a smile and a selloff-corr spike in the paths so a knock-in can see those, not only as charges.")
         case "tenor":
             return BlockHelp(
                 what: "How long the note lives, and how the final level is measured. The Asian tail replaces the single closing level with an average of the last few daily fixings.",
@@ -82,14 +82,14 @@ public enum Teach {
                 watch: "Drag the term across a call date boundary and watch the expected life on the Note tab shift. Turn the Asian tail on and off — the effect is small and two-sided, which is itself worth learning.")
         case "coupon":
             return BlockHelp(
-                what: "The income leg. Guaranteed coupons pay in every scenario. Contingent coupons pay only when the underlying is at or above the coupon barrier on the observation date.",
-                moves: "Value rises one-for-one with the coupon rate against the annuity factor Q shown on the math tab. Anything that makes coupons harder to earn — a higher barrier, daily observation, a call that ends the note early — lowers value at the same headline rate.",
+                what: "The income leg. Guaranteed coupons pay in every scenario. Contingent coupons pay only when the underlying is at or above the coupon barrier on the observation date. A European coupon pays the full rate × tenor once at maturity — a 10% 3-year European is 30% at T, not a single 10% digital.",
+                moves: "Value rises with the coupon rate against the annuity factor Q on the math tab. On a bullet or autocall, that move is one-for-one at frozen Q. An issuer call is different: exercise depends on the coupon, so Q itself moves when you drag the rate. Anything that makes coupons harder to earn — a higher barrier, more frequent observations, a call that ends the note early — lowers value at the same headline rate.",
                 watch: "Set a coupon with everything else off and watch value climb above par. No issuer can sell that. Something has to be sold to pay for it, which is what the downside block does.")
         case "call":
             return BlockHelp(
-                what: "Early redemption. An autocall triggers automatically when the underlying is at or above the trigger on an observation date. An issuer call is the bank's choice. Both stop the note and return par.",
+                what: "Early redemption. An autocall triggers automatically when the underlying is at or above the trigger on an observation date. An issuer call is the bank's choice. Both stop the note and return par plus any call premium (and snowball, if it is on).",
                 moves: "Adding a call lowers value at the same coupon, because the note is taken away in exactly the healthy scenarios where you were happy to keep collecting. That is why callable notes quote higher coupons than bullets.",
-                watch: "Turn the autocall on and watch value fall, then raise the trigger and watch it recover — a harder trigger means the note survives longer. The called-by distribution on the Note tab shows where the early exits cluster.")
+                watch: "Turn the autocall on and watch value fall, then raise the trigger and watch it recover — a harder trigger means the note survives longer. Switch Autocall to Issuer call: the bank now exercises when a small LS fit says the remaining note is worth more than redemption (par plus premium and snowball, not a 100% print). The called-by distribution on the Note tab shows where the early exits cluster.")
         case "upside":
             return BlockHelp(
                 what: "What you receive at maturity if the market is up. Linear participation pays a share of the gain. A digital pays a fixed amount if the final level clears its strike. Absolute pays gains in both directions.",
@@ -102,7 +102,7 @@ public enum Teach {
                 watch: "Compare a 60% knock-in with a 60% buffer at the same coupon. The knock-in is worth much more to the issuer, because the buffer erodes gradually while the knock-in falls off a cliff.")
         case "protectionObs":
             return BlockHelp(
-                what: "How the barrier is watched. European looks once, at maturity. Monitored looks on a schedule and the breach sticks forever. Daily uses a Brownian bridge, which also counts touches that happen between closes.",
+                what: "How the barrier is watched. European looks once, at maturity. Monitored looks on a schedule and the breach sticks forever. Daily adds a Brownian-bridge correction between monthly closes — not a 252-day fixings grid.",
                 moves: "The more often you look, the more often the barrier breaks, so the put you sold is worth more and the note is worth less at the same coupon.",
                 watch: "Hold the barrier at 60% and step through European, monthly, and daily. Three different prices for the same headline number — this is the single most under-read line on a term sheet.")
         case "rates":
@@ -114,7 +114,7 @@ public enum Teach {
             return TeachCopy.chargesHelp
         case "payoff":
             return BlockHelp(
-                what: "What you get back at maturity for every possible level of the underlying, per $1,000. The dashed line is what you would have had by simply owning the market instead, so the gap between the two lines is what the structure did for you — or to you.",
+                what: "What you get back at maturity for every possible level of the underlying, per $1,000. The dashed line is what you would have had by simply owning the market instead, so the gap between the two lines is what the structure did for you — or to you. This is a European slice: knock is inferred from the final level, so a monitored knock-in that touched and recovered is drawn as if it never knocked.",
                 moves: "",
                 watch: "Find the places where the solid line jumps or bends. Every one of those is a barrier or a strike, and every one of them is a point where a small market move changes your outcome a lot. Coupons are not drawn here; they ride on top of whatever this chart shows.")
         case "decomposition":
@@ -126,7 +126,7 @@ public enum Teach {
             return BlockHelp(
                 what: "The walk from a frictionless model price down to a number a desk could actually trade, and then down again to what the issuer nets after paying the distributor.",
                 moves: "",
-                watch: "This is where a term sheet's estimated value comes from. Note where the selling concession sits: below the dealer offer, not above it. It comes out of the issuer's proceeds and does not change the option package at all.")
+                watch: "This is where a term sheet's estimated value comes from. Note where the selling concession sits: below the dealer offer, not above it. The stack is one CRN prefix: 1,600-path mid minus 1,600-path charges, so the rows add. The Note-tab headline is 4,000 of the same array. Coupon-to-par with charges on prints this offer at par.")
         case "outcomes":
             return BlockHelp(
                 what: "How often each ending happens across the simulated paths: called early and when, finished with a loss, or ran to maturity clean.",
@@ -134,22 +134,22 @@ public enum Teach {
                 watch: "Read these as pricing weights, not as a forecast. They come from a risk-neutral simulation, which deliberately assumes every asset drifts at the funding rate rather than at whatever you believe equities will return. That assumption is what makes the price arbitrage-free, and it is why these numbers are the right input for valuation and the wrong input for a client's expected return.")
         case "advisor":
             return BlockHelp(
-                what: "The same structure written the way you would say it out loud to a client: what they earn, how it can end early, and what they are risking.",
+                what: "The same structure written the way you would say it out loud to a client: what they earn, how it can end early, and what they are risking. An issuer call is described as the bank's discretion; the LS exercise is the pricing assumption, not the contract.",
                 moves: "",
                 watch: "Every sentence here is generated from the live build, so it can never drift from the actual terms. If a sentence surprises you, the build is not what you thought it was.")
         case "risk":
             return BlockHelp(
-                what: "The note priced again with one market input nudged and every contractual term held frozen. The difference is the sensitivity — that is all a Greek is.",
+                what: "The note priced again with one market input nudged and every contractual term held frozen. The difference is the sensitivity — that is all a Greek is. Diffs use the first 1,600 paths of the same CRN array as the 4,000-path headline mark.",
                 moves: "",
-                watch: "The hedge sheet underneath is the useful part: it bumps each underlying on its own, with the others held still, which is how a desk actually decides what to trade. On a worst-of the risk is rarely spread evenly.")
+                watch: "The hedge sheet underneath is the useful part: it bumps each underlying on its own, with the others held still, which is how a desk actually decides what to trade. On a worst-of the risk is rarely spread evenly. The path count on this tab is the 1,600-path prefix, not the Note-tab 4,000.")
         case "events":
             return BlockHelp(
-                what: "The clock rolled forward to the note's dangerous moments — the first call observation, and the final month before maturity — with the terms unchanged.",
+                what: "The clock rolled forward to the note's dangerous moments — the first call observation, and the final month before maturity — with the terms unchanged. Charted on the 1,600-path CRN prefix, not the 4,000-path headline.",
                 moves: "",
-                watch: "Look for the sign flip through the call trigger and the near-vertical stretch just above the barrier. Those are the two places where hedging a note is genuinely hard, and they are invisible in today's numbers.")
+                watch: "Look for the sign flip through an autocall trigger, and the near-vertical stretch just above a KI barrier. On an issuer call the chart is min(continuation, redemption), not a 100% cliff. Those are the places where hedging a note is genuinely hard, and they are invisible in today's numbers.")
         case "ladder":
             return BlockHelp(
-                what: "Value and sensitivity across a range of market levels, drawn rather than tabulated.",
+                what: "Value and sensitivity across a range of market levels, drawn rather than tabulated. Same 1,600-path CRN prefix as the Greeks — not the 4,000-path headline.",
                 moves: "",
                 watch: "Notice that sensitivity peaks between the barriers rather than at today's level. The note's fate is most uncertain there, which is exactly where its value moves fastest.")
         case "deskbook":
@@ -159,7 +159,7 @@ public enum Teach {
                 watch: "Everything the desk is long, you are short, and vice versa. Reading this makes the pricing intuitive — you can see why the desk cares about the barrier strike, the observation dates, and the correlation, because those are the things it has to hedge.")
         case "ledger":
             return BlockHelp(
-                what: "The note rebuilt one feature at a time, priced at every step. Each row's change is that feature's price in points of par.",
+                what: "The note rebuilt one feature at a time, priced at every step on the same 4,000 CRN paths as the Note tab, so the last row ties to the headline mark. Each row's change is that feature's price in points of par.",
                 moves: "",
                 watch: "Order matters: a feature's price depends on what is already switched on, because features interact. A barrier is worth much more on a worst-of than on a single index. Read the ledger as one particular path through the build, not as a set of independent prices.")
         default:
@@ -179,11 +179,23 @@ public enum Teach {
         if a.members != b.members {
             if b.members.count > a.members.count {
                 let added = b.members.filter { !a.members.contains($0) }.joined(separator: ", ")
+                if b.basket == .weighted {
+                    return ChangeNote(
+                        label: "Added \(added) to the basket",
+                        why: "A new name in a weighted basket dilutes every existing weight. You have more diversification, not a worse worst-of — the average usually gets safer, so the same terms are typically worth more. The move is two-sided if the name you added is much more volatile than what was already there.",
+                        twoSided: true)
+                }
                 return ChangeNote(
                     label: "Added \(added) to the basket",
                     why: "Every name you add is another way for the worst performer to be worse. A worst-of over more names has a lower expected minimum, so barriers break more often and the note is worth less at the same coupon. Run it the other way and you see why issuers add names when a client asks for a bigger coupon.")
             }
             let dropped = a.members.filter { !b.members.contains($0) }.joined(separator: ", ")
+            if b.basket == .weighted {
+                return ChangeNote(
+                    label: "Removed \(dropped) from the basket",
+                    why: "Fewer names in a weighted basket concentrates the remaining weights. That can help or hurt depending on which name left — it is not the worst-of story where fewer names is always kinder.",
+                    twoSided: true)
+            }
             return ChangeNote(
                 label: "Removed \(dropped) from the basket",
                 why: "Fewer names means a less punishing worst performer, so the protection you sold is worth less to the desk and the note is worth more as built.")
@@ -198,7 +210,8 @@ public enum Teach {
         if a.weights != b.weights && b.basket == .weighted {
             return ChangeNote(
                 label: "Basket weights changed",
-                why: "Weights are normalised to sum to 100%, so raising one name lowers the others proportionally. Concentrating the basket into a single volatile name makes it behave more like that one name — and less like a diversified average — which is worth less to you at the same terms.")
+                why: "Weights are normalised to sum to 100%, so raising one name lowers the others proportionally. Concentrating into a high-vol name usually makes the same terms worth less; concentrating into a low-vol name usually makes them worth more. Watch the measured Δ rather than assuming diversification always helps.",
+                twoSided: true)
         }
         if moved(a.correlation, b.correlation) {
             return b.correlation > a.correlation
@@ -207,11 +220,52 @@ public enum Teach {
                 : ChangeNote(label: "Correlation \(String(format: "%.2f", a.correlation)) → \(String(format: "%.2f", b.correlation))",
                              why: "Lower correlation means the names scatter, so the worst of them is worse. More dispersion means more downside sold, and the note is worth less as built.")
         }
+        if a.crashCorrOn != b.crashCorrOn {
+            return b.crashCorrOn
+                ? ChangeNote(label: "Crash corr on",
+                             why: "Pairwise ρ now rises as the basket trades down — ρ(z) = ρ + slope × max(1−z, 0) × 10, via a fresh Cholesky at each step. A desk uses a term/spot corr surface; this is a one-parameter cartoon. The effect is two-sided: a worst-of can cheapen (less dispersion in the left tail) while a weighted-basket KI gets more systematic left-tail variance.",
+                             twoSided: true)
+                : ChangeNote(label: "Crash corr off",
+                             why: "Back to one equicorrelation for the whole path. The selloff spike is gone; the correlation bid-ask in the charge stack is once again the only corr adjustment.")
+        }
+        if moved(a.crashCorrSlope, b.crashCorrSlope) {
+            return ChangeNote(
+                label: "Crash-corr slope \(String(format: "%.2f", a.crashCorrSlope)) → \(String(format: "%.2f", b.crashCorrSlope)) per 10% drop",
+                why: "Steeper spike means names couple harder exactly when the basket is down. Watch worst-of and weighted separately — they often move opposite ways. This is not a calibrated surface.",
+                twoSided: true)
+        }
+        if a.markVol != b.markVol {
+            let keys = Set(a.markVol.keys).union(b.markVol.keys).sorted()
+            let t = keys.first { moved(a.atmVol(for: $0), b.atmVol(for: $0)) } ?? keys.first ?? b.members.first ?? "name"
+            return ChangeNote(
+                label: "\(t) ATM \(String(format: "%.1f", a.atmVol(for: t) * 100))% → \(String(format: "%.1f", b.atmVol(for: t) * 100))% (your snapshot)",
+                why: "You overwrote the compiled catalog ATM. This is your snapshot, not a live implied, and it persists with the spec. The Monte Carlo uses this vol plus the parallel vol shift. Higher vol widens outcomes: a sold knock-in or buffer is usually worth less to you; owned optionality is the other way.",
+                twoSided: true)
+        }
+        if a.markSpot != b.markSpot {
+            let keys = Set(a.markSpot.keys).union(b.markSpot.keys).sorted()
+            let t = keys.first { moved(a.displaySpot(for: $0), b.displaySpot(for: $0)) } ?? keys.first ?? b.members.first ?? "name"
+            return ChangeNote(
+                label: "\(t) spot \(String(format: "%.2f", a.displaySpot(for: t))) → \(String(format: "%.2f", b.displaySpot(for: t))) (your snapshot)",
+                why: "Spot is display-only. Paths run in return space, so this number does not change the mark. ATM vol on the same card is the input that prices. Still your snapshot, not a live print.")
+        }
         if moved(a.volShift, b.volShift) {
             return ChangeNote(
                 label: "Vol shift \(String(format: "%+.0f", a.volShift * 100)) → \(String(format: "%+.0f", b.volShift * 100)) pts",
                 why: "Volatility widens the distribution of outcomes. If you have sold a put — a buffer or a knock-in — extra vol makes it more valuable to the desk and so the note is worth less to you. On a fully protected growth note with no downside sold, extra vol works the other way, because you own optionality instead of having sold it.",
                 twoSided: true)
+        }
+        if a.localVolOn != b.localVolOn {
+            return b.localVolOn
+                ? ChangeNote(label: "Local vol on",
+                             why: "Volatility now rises as a name trades down — σ(x) = σ_ATM + slope × max(1−x, 0) × 10. Barriers and puts see a smile in the paths, not only as a charge after the fact. A desk Dupire surface is calibrated to listed options and is time-dependent; this is a one-parameter cartoon. The skew charge is switched off while this is on, so the smile is not counted twice.")
+                : ChangeNote(label: "Local vol off",
+                             why: "Back to one flat volatility per name. The smile, if you want it, is the skew charge in the stack rather than something the paths themselves know about.")
+        }
+        if moved(a.localVolSlope, b.localVolSlope) {
+            return ChangeNote(
+                label: "Local-vol slope \(String(format: "%.1f", a.localVolSlope * 100)) → \(String(format: "%.1f", b.localVolSlope * 100))v per 10% below spot",
+                why: "Steeper downside leverage means more vol exactly where knock-ins live, so a barrier note is worth less to you and more to the desk. At-the-money and upside states are unchanged. This is not a calibrated surface — it is the same units as the skew charge, put into the SDE.")
         }
 
         // ---- tenor
@@ -246,7 +300,13 @@ public enum Teach {
                                   why: "Coupons now pay only when the underlying clears the barrier on an observation date. You have sold the issuer a ladder of digital options, one per date, and the money you gave up is what funds the higher headline rate.")
             }
         }
-        if moved(a.couponRate, b.couponRate) {
+        if moved(a.couponRate, b.couponRate), !b.snowball {
+            if b.call == .issuerCall {
+                return ChangeNote(
+                    label: "Coupon rate \(p(a.couponRate, 2)) → \(p(b.couponRate, 2))",
+                    why: "At a frozen spec, coupon leg = c × Q still ties. With issuer call, Q is not frozen: a richer coupon makes continuation more expensive for the bank, so more paths get called and Q shrinks. The move is not a straight line. That is why coupon-to-par solves quote(c) = par with a bracketed root finder, not a single Q shot.",
+                    twoSided: true)
+            }
             return ChangeNote(
                 label: "Coupon rate \(p(a.couponRate, 2)) → \(p(b.couponRate, 2))",
                 why: "This is the one lever that moves value in a straight line. Value changes by the rate change times the annuity factor Q on the math tab, and nothing else. If you want to know what a feature is worth, price it and then solve for the coupon change that offsets it.")
@@ -254,7 +314,7 @@ public enum Teach {
         if a.couponObs != b.couponObs {
             return ChangeNote(
                 label: "Coupon schedule → \(b.couponObs.rawValue)",
-                why: "The schedule changes both timing and conditionality. More observations mean more chances to clear the barrier and get paid sooner, which helps. It also means more separate digital tests. A European coupon pays once at maturity on a single look.",
+                why: "The schedule changes both timing and conditionality. More observations mean more chances to clear the barrier and get paid sooner, which helps. It also means more separate digital tests. A European coupon pays the full rate × tenor once at maturity — a 10% 3-year European is 30% at T, not a single 10% digital.",
                 twoSided: true)
         }
         if moved(a.couponBarrier, b.couponBarrier) {
@@ -266,10 +326,10 @@ public enum Teach {
         }
         if a.couponBarrierObs != b.couponBarrierObs {
             return b.couponBarrierObs == .dailyMonitored
-                ? ChangeNote(label: "Coupon barrier → daily observed",
-                             why: "A single touch below the barrier at any point in the period now kills that coupon, instead of only the closing level on the payment date mattering. That is a much harder test, so the same headline rate is worth materially less to you.")
+                ? ChangeNote(label: "Coupon barrier → monthly closes + bridge",
+                             why: "A close or a Brownian-bridge touch below the barrier at any point in the coupon period now kills that coupon — the same interpolation the KI daily setting uses. The same headline rate is worth less to you.")
                 : ChangeNote(label: "Coupon barrier → payment-date observed",
-                             why: "Only the level on the payment date matters now. Intra-period dips are forgiven, so coupons are far easier to earn.")
+                             why: "Only the level on the payment date matters now. Intra-period touches are forgiven, so coupons are easier to earn.")
         }
         if a.memory != b.memory {
             return b.memory
@@ -288,7 +348,7 @@ public enum Teach {
                                   why: "The note now redeems early whenever the underlying is at or above the trigger on an observation date. Notice which scenarios that removes: the healthy ones, where you were happily collecting coupons. You keep the bad paths and lose the good ones, which is why value falls and why callables quote higher coupons than bullets.")
             case .issuerCall:
                 return ChangeNote(label: "Issuer call on",
-                                  why: "The bank decides when to call. This is priced with a fixed rule — call whenever the level is at or above 100% — which is the friendliest possible assumption for the holder. Real optimal exercise is worse for you, so read the value here as an upper bound rather than a quote.")
+                                  why: "The bank decides when to call. Exercise is a small Longstaff–Schwartz regression on (1, z, z², knocked) — the issuer redeems when fitted continuation exceeds redemption (par plus any call premium, plus snowball if it is on). That is the right economics and a cartoon of a desk LSMC, not a production exercise boundary.")
             }
         }
         if a.callObs != b.callObs {
@@ -446,7 +506,7 @@ public enum Teach {
         if a.protObs != b.protObs {
             return ChangeNote(
                 label: "Protection observation → \(b.protObs.rawValue)",
-                why: "This is the most under-read line on a term sheet. European looks once, at maturity. Monitored looks on a schedule and the breach sticks. Daily with a Brownian bridge also counts the touches that happen between closes. The same barrier level can price points apart depending only on how it is watched.")
+                why: "This is the most under-read line on a term sheet. European looks once, at maturity. Monitored looks on a schedule and the breach sticks. Monthly closes + bridge also counts interpolated hits between those closes — not a 252-day fixings grid. The same barrier level can price points apart depending only on how it is watched.")
         }
 
         // ---- rates and funding
@@ -522,7 +582,7 @@ public enum Teach {
                goal: "Learn that features are not free — they are purchases.",
                steps: ["A single volatile name, three years, a 10.5% guaranteed coupon, and nothing sold against it.",
                        "Read the value, then find the coupon strip in the trader decomposition."],
-               notice: "The value is far above par — around 116 — which means no issuer on earth could sell this note. You are asking for roughly thirty points of coupon out of a fourteen-point funding budget. The coupon has to be paid for, and the only things you own that are worth selling are your upside and your downside.",
+               notice: "The value is far above par, which means no issuer on earth could sell this note. You are asking for a coupon strip worth more than the funding budget that pays for it. The coupon has to be paid for, and the only things you own that are worth selling are your upside and your downside.",
                spec: build { s in
                    s.members = ["NVDA"]
                    s.coupon = .guaranteed; s.couponRate = 0.105; s.couponObs = .quarterly
@@ -534,7 +594,7 @@ public enum Teach {
                steps: ["Lesson 2's exact build, with one thing added: a 60% knock-in put.",
                        "Compare the value with Lesson 2, then read the downside leg in the decomposition.",
                        "Now switch the underlying to SPX and watch what happens to the same barrier."],
-               notice: "The value falls roughly sixteen points and lands almost exactly at par — this note can actually be issued. That sixteen points is the market price of your downside, and it is precisely what bought the coupon. Then swap in a low-volatility index and the same 60% barrier is suddenly worth almost nothing, so the note flies back above par. That is why the street writes income notes on volatile names and on worst-of baskets rather than on a single broad index: a barrier only funds a coupon if it might actually be reached.",
+               notice: "The value falls by about the size of that coupon overpay and lands near par — this note can actually be issued. That drop is the market price of your downside, and it is precisely what bought the coupon. Then swap in a low-volatility index and the same 60% barrier is suddenly worth almost nothing, so the note flies back above par. That is why the street writes income notes on volatile names and on worst-of baskets rather than on a single broad index: a barrier only funds a coupon if it might actually be reached.",
                spec: build { s in
                    s.members = ["NVDA"]
                    s.coupon = .guaranteed; s.couponRate = 0.105; s.couponObs = .quarterly
@@ -561,7 +621,7 @@ public enum Teach {
                steps: ["A 60% knock-in, observed at maturity only (European).",
                        "In the Downside block, change protection observation to monthly, then to daily.",
                        "Leave the barrier level untouched the whole time."],
-               notice: "Three materially different values from one unchanged headline number. Monitoring adds every observation date as a chance to break; the daily setting also counts touches between closes. When a term sheet says '60% barrier', the observation line is half the story.",
+               notice: "Three materially different values from one unchanged headline number. Monitoring adds every observation date as a chance to break; the daily setting is monthly closes plus a Brownian-bridge correction for touches between them — not a 252-day grid. When a term sheet says '60% barrier', the observation line is half the story.",
                spec: build { s in
                    s.members = ["SPX", "NDX", "RTY"]
                    s.coupon = .contingent; s.couponRate = 0.11; s.couponObs = .quarterly
@@ -602,7 +662,7 @@ public enum Teach {
                steps: ["Four-year SPX, absolute return down to an 80% knock-out, 60% knock-in below.",
                        "Study the maturity profile chart before reading anything else.",
                        "Then drag the knock-out from 80% down to 65%."],
-               notice: "The payoff makes a V: gains up, gains down to the knock-out, then the cliff. The peak sits exactly at the knock-out, and widening the band raises the value because more of the distribution pays you. Clients hear 'gains either way' — the knock-out is the fine print that limits it.",
+               notice: "The payoff is three regimes, not a clean V: gains above par, a par shelf between the 60% knock-in and the 80% knock-out, then gains again down to the knock-out, then the KI cliff. The peak sits at the knock-out, and widening the band raises the value because more of the distribution pays you. Clients hear 'gains either way' — the knock-out is the fine print that limits it, and the shelf is the stretch where you just get par back.",
                spec: build { s in
                    s.members = ["SPX"]; s.termYears = 4
                    s.upside = .absolute; s.participation = 1.0
@@ -653,6 +713,49 @@ public enum Teach {
                    s.call = .autocall; s.callObs = .monthly; s.nonCallMonths = 3
                    s.downside = .kiPut; s.protection = 0.55
                }),
+
+        Lesson(number: 12,
+               title: "Issuer call is not autocall at 100%",
+               goal: "See the difference between a forced 100% trigger and a small Longstaff–Schwartz exercise.",
+               steps: ["A three-name income note with issuer call, quarterly after a 6-month lockout.",
+                       "Read expected life and the called-by chart — this is the LS fit, not a contractual trigger.",
+                       "Switch Callability to Autocall and leave the trigger at 100%. Compare expected life and value."],
+               notice: "Autocall at 100% redeems every path that prints at or above par on an observation. Issuer call lets the bank keep cheap funding when the note is still a good deal for them, and only pull it when continuation is worth more than redemption. The model here is a four-regressor Longstaff–Schwartz (1, z, z², knocked) — a cartoon of that idea, not a desk LSMC. The autocall-at-100% number is a holder-unfriendly bound, not the contract.",
+               spec: build { s in
+                   s.members = ["SPX", "NDX", "RTY"]
+                   s.coupon = .contingent; s.couponRate = 0.11; s.couponObs = .quarterly
+                   s.couponBarrier = 0.70
+                   s.call = .issuerCall; s.callObs = .quarterly; s.nonCallMonths = 6
+                   s.downside = .kiPut; s.protection = 0.60
+               }),
+
+        Lesson(number: 13,
+               title: "A smile in the paths, not only a charge",
+               goal: "Compare a flat-vol knock-in plus skew charge with a local-vol smile inside the Monte Carlo.",
+               steps: ["A single-name 60% knock-in with Charges on and local vol off. Read the skew line in the offer build-up.",
+                       "Turn local vol on in Underlying. The skew charge goes to zero — the smile is now in the paths.",
+                       "Turn local vol back off and drag the skew slope. Do not run both: the engine already refuses to double-count."],
+               notice: "The skew charge reprices the downside leg at strike vol after a flat-vol Monte Carlo. Local vol puts the same slope into σ(x) so the barrier can actually be hit more often. A desk Dupire surface is calibrated to listed options and depends on time; this is a one-parameter cartoon, default off. The two answers will not match to a point — they are two different ways of admitting the wing exists.",
+               spec: build { s in
+                   s.members = ["NVDA"]
+                   s.coupon = .guaranteed; s.couponRate = 0.105; s.couponObs = .quarterly
+                   s.downside = .kiPut; s.protection = 0.60
+                   s.chargesOn = true
+               }),
+
+        Lesson(number: 14,
+               title: "Crash corr is two-sided: worst-of vs weighted",
+               goal: "Watch a selloff spike in ρ move a worst-of KI and a weighted KI in opposite directions.",
+               steps: ["A three-index 70/60 income note, worst-of, one ρ. Turn crash corr on and read the value.",
+                       "Switch the basket from worst-of to weighted. Leave the spike on.",
+                       "Turn crash corr off and on again on the weighted build, then switch back to worst-of."],
+               notice: "A worst-of holder is long correlation: when names couple in a crash there is less dispersion, so the worst is less bad and the KI you sold can cheapen. A weighted basket's variance rises with ρ, so the same spike fattens the left tail and the KI gets more expensive. One ρ cannot show that. This spike is a one-parameter cartoon (per-step Cholesky), not a desk term/spot corr surface. Default off.",
+               spec: build { s in
+                   s.members = ["SPX", "NDX", "RTY"]; s.correlation = 0.75
+                   s.coupon = .contingent; s.couponRate = 0.10; s.couponObs = .quarterly
+                   s.couponBarrier = 0.70
+                   s.downside = .kiPut; s.protection = 0.60
+               }),
     ]
 
     // MARK: what the Greeks mean for a note
@@ -675,10 +778,10 @@ public enum Teach {
               desk: "Value is expressed per $1 of par so structures of different sizes compare directly."),
         .init(name: "Model value",
               plain: "What the package of bond and options is actually worth today, before any of the desk's costs.",
-              desk: "A frictionless mid. Nobody trades here; it is the starting point for the charge stack."),
+              desk: "A frictionless mid. The Note tab uses 4,000 CRN paths. The dealer-offer stack re-prices that same array's first 1,600 as its own mid so mid minus charges adds."),
         .init(name: "Estimated value",
               plain: "The number on the term sheet that sits below the $1,000 you paid. It is the dealer offer after charges.",
-              desk: "Mid less skew, overhedge, correlation and vega bid-ask, and reserves. Distribution fees sit below that again."),
+              desk: "The 1,600-path CRN-prefix mid less skew, overhedge, correlation and vega bid-ask, and reserves — not the 4,000-path headline minus 1,600-path diffs. Distribution fees sit below that again."),
         .init(name: "Funding leg",
               plain: "The bond part of the note: the issuer's promise to repay, discounted at the bank's own borrowing rate.",
               desk: "z_f(t) = Treasury zero plus credit spread. Every flow discounts at its own tenor off that curve."),
@@ -687,19 +790,19 @@ public enum Teach {
               desk: "A strip of digital options, one per observation. Pin risk on every date."),
         .init(name: "Coupon barrier",
               plain: "The level the underlying must hold for a contingent coupon to be paid.",
-              desk: "The digital strike. Its observation style — payment date or daily — changes the price materially."),
+              desk: "The digital strike. Payment-date vs monthly-closes-plus-bridge observation changes the price; both KI daily and coupon daily-monitor use the same Brownian-bridge interpolation."),
         .init(name: "Memory",
               plain: "Missed coupons are remembered and paid later, on the first observation that clears the barrier.",
               desk: "Chains the digitals together instead of leaving them independent. Harder to hedge, worth more to the client."),
         .init(name: "Q (annuity factor)",
               plain: "The note's own discounted count of coupon payments. Multiply the coupon rate by Q to get the value of the whole income leg.",
-              desk: "Q = E[Σ df at paid dates]. Because the model uses common random numbers, coupon leg = c × Q exactly."),
+              desk: "Q = E[Σ year-fraction × df at paid dates]. Because the model uses common random numbers, coupon leg = c × Q exactly."),
         .init(name: "Autocall",
               plain: "The note redeems early and automatically when the underlying is at or above the trigger on an observation date.",
               desk: "You are short the good scenarios. Negative gamma sits just under the trigger into each observation."),
         .init(name: "Issuer call",
               plain: "The bank chooses whether to redeem early. You do not.",
-              desk: "Priced here with a fixed rule, which flatters the holder. Optimal exercise is worth less to you, so treat the value as an upper bound."),
+              desk: "Small Longstaff–Schwartz on (1, z, z², knocked). Issuer calls when fitted continuation exceeds redemption. A cartoon of optimal exercise — a desk uses more regressors, more paths, and a carefully chosen measure."),
         .init(name: "Step-down trigger",
               plain: "An autocall level that falls as the note ages, making early redemption progressively easier.",
               desk: "Truncates the tail and the coupon stream at once. Genuinely two-sided in value."),
@@ -722,8 +825,8 @@ public enum Teach {
               plain: "Below the buffer you lose more than a point per point, so a total loss becomes possible.",
               desk: "Gearing is 1 divided by the strike. Sells materially more downside than a plain buffer at the same level."),
         .init(name: "Barrier observation",
-              plain: "How often the barrier is checked: only at maturity, on a schedule, or every day.",
-              desk: "European, monitored, or continuous. The same level prices points apart across the three."),
+              plain: "How often the barrier is checked: only at maturity, on a schedule, or monthly closes with a Brownian-bridge correction for touches between them.",
+              desk: "European, monitored, or monthly+bridge. The same level prices points apart across the three."),
         .init(name: "Second chance",
               plain: "A barrier that already broke is forgiven if the final level recovers above a stated level.",
               desk: "Pulls an American knock back toward European. Recovers most of the monitoring penalty."),
@@ -736,6 +839,9 @@ public enum Teach {
         .init(name: "Weighted basket",
               plain: "Conditions read a weighted average of the members, so one bad name is diluted by the others.",
               desk: "Long correlation relative to worst-of. Diversification cheapens the options, so terms are thinner."),
+        .init(name: "Crash corr",
+              plain: "Correlation that rises when the basket is down — names start moving together in a selloff.",
+              desk: "Here a one-parameter spike, default off, per-step Cholesky. A desk uses a term/spot-dependent corr surface. Two-sided: worst-of vs weighted often move opposite ways. Not a quote."),
         .init(name: "Participation",
               plain: "The share of any gain that you receive at maturity. 150% participation pays one and a half times the rise.",
               desk: "Value is linear in it: upside leg = participation × unit upside U."),
@@ -753,7 +859,10 @@ public enum Teach {
               desk: "Cuts terminal variance and terminal gamma. Slightly lowers the expected final level under positive drift."),
         .init(name: "Skew",
               plain: "Out-of-the-money puts trade at higher implied volatility than at-the-money options. A flat-volatility model misses this.",
-              desk: "Repricing the downside leg at its own strike vol. Usually the largest charge on an income note."),
+              desk: "Default: reprice the downside leg at strike vol (the charge). Optional local vol puts the same slope into the paths instead. Do not run both."),
+        .init(name: "Local vol",
+              plain: "Volatility that changes with the level of the underlying — usually higher when the market is down.",
+              desk: "Here a one-parameter leverage function, default off. A desk Dupire / local-vol surface is calibrated to the listed smile and depends on time. Treat the toggle as a way to see a barrier react to a smile, not as a quote."),
         .init(name: "Overhedge",
               plain: "A charge for the fact that barriers and digitals cannot be hedged exactly, only approximately.",
               desk: "Shift every discontinuity against the client and reprice. The shift width is both the hedge and the charge."),
@@ -762,10 +871,10 @@ public enum Teach {
               desk: "Does not touch the model value at all. Sits below the dealer offer in the build-up, not above it."),
         .init(name: "Common random numbers",
               plain: "The model reuses one fixed set of random draws for every calculation, so differences between two builds are real rather than noise.",
-              desk: "CRN. Makes charge and ledger differences clean, and keeps the leg identity exact."),
+              desk: "CRN. The 1,600-path bump set is a prefix of the 4,000-path headline array, not a second draw. Makes charge, Greek, and ledger differences clean, and keeps the leg identity exact."),
         .init(name: "Monte Carlo",
               plain: "The model simulates thousands of possible market paths and averages what the note would pay on each.",
-              desk: "Risk-neutral GBM with a correlated Cholesky draw. Four thousand paths for the headline, fewer for the bumps."),
+              desk: "Risk-neutral GBM with a correlated Cholesky draw. Four thousand paths for the headline (Note tab, ledger). Greeks, events, the ladder, and the dealer-offer stack (its mid and its charges) use the first 1,600 of the same CRN array. Coupon-to-par when the quote is nonlinear uses that prefix too."),
     ]
 
     // MARK: term-sheet translation
@@ -785,7 +894,7 @@ public enum Teach {
             let label = s.snowball ? "Accrued Coupon Rate" : (s.coupon == .contingent ? "Contingent Coupon Rate" : "Fixed Coupon Rate")
             rows.append((label, "\(p(s.snowball ? s.snowballRate : s.couponRate)) per annum, paid \(s.snowball ? "on the call date" : s.couponObs.rawValue.lowercased())"))
             if s.coupon == .contingent {
-                rows.append(("Coupon Barrier", "\(p(s.couponBarrier, 0)) of Initial Level\(s.couponBarrierObs == .dailyMonitored ? ", observed daily" : ", observed on each Coupon Observation Date")"))
+                rows.append(("Coupon Barrier", "\(p(s.couponBarrier, 0)) of Initial Level\(s.couponBarrierObs == .dailyMonitored ? ", observed continuously during the coupon period (monthly closes + Brownian-bridge hits)" : ", observed on each Coupon Observation Date")"))
             }
             if s.memory { rows.append(("Memory Feature", "Applicable — unpaid coupons are carried forward")) }
         }
@@ -842,12 +951,20 @@ public enum Teach {
         rows.append(("Issuer Credit", "All payments are subject to the credit risk of the Issuer. These notes are unsecured obligations and are not deposits."))
         return rows
     }
+
+    public static func termSheetPlain(_ s: Instrument, offer: Double?) -> String {
+        var lines = ["STRUCTURED NOTE — term sheet (model)", ""]
+        for (label, value) in termSheet(s, offer: offer) {
+            lines.append("\(label): \(value)")
+        }
+        return lines.joined(separator: "\n")
+    }
 }
 
 /// Kept separate so the charges copy can be long without crowding the switch.
 enum TeachCopy {
     static let chargesHelp = BlockHelp(
-        what: "The bridge from a model mid to a price a desk could actually trade. Five costs: skew, overhedge, correlation bid-ask, vega bid-ask, and a flat reserve — then the selling concession below that.",
+        what: "The bridge from a model mid to a price a desk could actually trade. Five costs: skew, overhedge, correlation bid-ask, vega bid-ask, and a flat reserve — then the selling concession below that. If local vol is on, skew is skipped so the smile is not charged twice.",
         moves: "Every charge lowers the offer. Skew is normally the largest on an income note, because a flat-volatility model badly underprices a deep out-of-the-money put. Correlation only bites when there is a basket.",
-        watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated.")
+        watch: "Turn the whole block off and on to see the mid and the offer side by side. The difference is what becomes the estimated value on a term sheet — not a markup, but the cost of hedging what cannot be replicated. The offer stack is the 1,600-path CRN prefix for both mid and charges; the Note-tab headline is 4,000 of the same array. Coupon-to-par with charges on prints this offer at par.")
 }

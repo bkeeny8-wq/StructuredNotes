@@ -134,6 +134,7 @@ struct LeverField: Equatable {
     static let mult   = LeverField(scale: 1,     decimals: 2, suffix: "×")
     static let volV   = LeverField(scale: 100,   decimals: 1, suffix: "v")
     static let volPts = LeverField(scale: 100,   decimals: 0, suffix: "pts", signed: true)
+    static let px     = LeverField(scale: 1,     decimals: 2)
     static let stepPct = LeverField(scale: 100,  decimals: 0, suffix: "%/yr")
     static let capPct = LeverField(scale: 100, offset: -100, decimals: 0, suffix: "%")
 }
@@ -165,7 +166,7 @@ struct LeverRow: View {
                             .multilineTextAlignment(.trailing)
                             .font(.footnote.monospaced().weight(.semibold))
                             .foregroundStyle(focused ? Theme.opt : Theme.ink)
-                            .frame(width: 62, alignment: .trailing)
+                            .frame(width: 76, alignment: .trailing)
                             .onSubmit { commit(f) }
                             .onChange(of: focused) { _, now in if !now { commit(f) } }
                             .toolbar {
@@ -222,7 +223,7 @@ struct StatCard: View {
 }
 
 struct StackSeg: Identifiable {
-    let id = UUID()
+    var id: String { name }
     let name: String
     let frac: Double
     let color: Color
@@ -233,10 +234,13 @@ struct CapitalStack: View {
     let segs: [StackSeg]
     let notional: Double
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        let visible = segs.filter { $0.frac > 0.004 }
+        let sum = visible.reduce(0.0) { $0 + $1.frac }
+        let scale = max(sum, 1e-9)
+        return VStack(alignment: .leading, spacing: 4) {
             GeometryReader { geo in
                 HStack(spacing: 1) {
-                    ForEach(segs.filter { $0.frac > 0.004 }) { s in
+                    ForEach(visible) { s in
                         ZStack(alignment: .leading) {
                             Rectangle().fill(s.color.opacity(0.16))
                             VStack(alignment: .leading, spacing: 1) {
@@ -249,7 +253,7 @@ struct CapitalStack: View {
                             }
                             .padding(.horizontal, 6)
                         }
-                        .frame(width: max(34, geo.size.width * s.frac))
+                        .frame(width: max(34, geo.size.width * CGFloat(s.frac / scale)))
                         .clipped()
                     }
                 }
@@ -258,7 +262,8 @@ struct CapitalStack: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .overlay(RoundedRectangle(cornerRadius: 8).stroke(Theme.rule))
             HStack {
-                Text("$0"); Spacer(); Text("Par = " + Fmt.usd0(notional))
+                Text("$0"); Spacer()
+                Text(sum > 1.002 ? "Value = " + Fmt.usd0(sum * notional) : "Par = " + Fmt.usd0(notional))
             }
             .font(.system(size: 10, design: .monospaced)).foregroundStyle(.secondary)
         }

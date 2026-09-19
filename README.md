@@ -1,6 +1,6 @@
 # Structured Notes — instrument builder (v22, teaching build)
 
-iPad SwiftUI **framework** that builds a structured note feature by feature, prices it, and explains itself.
+iPad-first SwiftUI **framework** that builds a structured note feature by feature, prices it, and explains itself. On iPhone the builder stacks above the work-through instead of squeezing into a 336pt rail.
 
 **Local path:** `/Users/brandonkeeny/Projects/Structured Notes`  
 **Remote:** https://github.com/bkeeny8-wq/StructuredNotes
@@ -18,10 +18,12 @@ Open **`StructuredNotesDesk.xcodeproj`** → scheme **StructuredNotesDeskExample
 
 - **You changed** explainer on every lever move (cause, measured Δ in points of par, mechanism)
 - **ⓘ help** on builder/output cards; protection-observation inline explainer
-- **Learn** pill — 11 guided lessons, term-sheet translation, two-register glossary
+- **Learn** pill — 14 guided lessons, term-sheet translation, two-register glossary
 - **The math** as a numbered derivation with substituted numbers + plain English
 - Risk tab: what the Greeks mean for a note; model limitations honesty card
 - New `Teach.swift` (teaching copy kept apart from layout)
+
+Also: pin-and-compare two builds, lesson progress, share the term sheet, solve coupon to par (calendar-correct Q). Issuer call uses a small Longstaff–Schwartz exercise (not autocall-at-100%). Optional local-vol leverage function and crash-corr spike (both default off) so a barrier can see a smile and a selloff coupling in the paths. ATM vol and spot on Underlying are a user-typed snapshot persisted with the spec — not a live feed. Headline Monte Carlo is 4,000 CRN paths; Greeks, events, and the ladder use the first 1,600 of that same array. The dealer-offer stack uses that prefix for both its mid and its charges.
 
 Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 
@@ -31,5 +33,6 @@ Continues v21/v20: vol shift on Underlying, parallel MC, debounced reprice.
 Sources/StructuredNotesDesk/   # framework (incl. Teach.swift)
 Example/                       # demo app + AppIcon
 StructuredNotesDesk.xcodeproj
-generate_xcodeproj.py          # regenerates pbxproj (registers Teach.swift)
+generate_xcodeproj.py          # regenerates pbxproj (stable hashed IDs)
+Tests/StructuredNotesDeskTests # engine golden tests (`swift test` via Package.swift)
 ```

@@ -1,50 +1,67 @@
 #!/usr/bin/env python3
-"""Generate StructuredNotesDesk.xcodeproj with Framework + Example app targets."""
+"""Generate StructuredNotesDesk.xcodeproj with Framework + Example + Tests.
+
+IDs are stable hashes of names (not uuid4), so a regenerate is a meaningful
+diff. Prefer editing project.pbxproj in place when adding a file; this script
+is the template if the project needs a rebuild.
+"""
 
 from __future__ import annotations
 
+import hashlib
 import os
-import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 PROJ = ROOT / "StructuredNotesDesk.xcodeproj"
 PROJ.mkdir(exist_ok=True)
 
-def uid() -> str:
-    return uuid.uuid4().hex[:24].upper()
+def uid(key: str) -> str:
+    """Stable 24-char hex ID from a name, so regenerating is not a noisy diff."""
+    return hashlib.md5(f"StructuredNotesDesk:{key}".encode()).hexdigest()[:24].upper()
 
-# Stable-ish IDs for readability / diffs
+# Stable IDs for readability / diffs
 IDS = {
-    "project": uid(),
-    "framework_target": uid(),
-    "app_target": uid(),
-    "framework_product": uid(),
-    "app_product": uid(),
-    "sources_group": uid(),
-    "framework_group": uid(),
-    "example_group": uid(),
-    "products_group": uid(),
-    "assets_ref": uid(),
-    "framework_sources": uid(),
-    "framework_frameworks": uid(),
-    "framework_resources": uid(),
-    "framework_headers": uid(),
-    "app_sources": uid(),
-    "app_frameworks": uid(),
-    "app_resources": uid(),
-    "project_config_list": uid(),
-    "framework_config_list": uid(),
-    "app_config_list": uid(),
-    "project_debug": uid(),
-    "project_release": uid(),
-    "framework_debug": uid(),
-    "framework_release": uid(),
-    "app_debug": uid(),
-    "app_release": uid(),
-    "framework_dep": uid(),
-    "embed_phase": uid(),
-    "copy_framework": uid(),
+    "project": uid("project"),
+    "framework_target": uid("framework_target"),
+    "app_target": uid("app_target"),
+    "framework_product": uid("framework_product"),
+    "app_product": uid("app_product"),
+    "sources_group": uid("sources_group"),
+    "framework_group": uid("framework_group"),
+    "example_group": uid("example_group"),
+    "products_group": uid("products_group"),
+    "assets_ref": uid("assets_ref"),
+    "framework_sources": uid("framework_sources"),
+    "framework_frameworks": uid("framework_frameworks"),
+    "framework_resources": uid("framework_resources"),
+    "framework_headers": uid("framework_headers"),
+    "app_sources": uid("app_sources"),
+    "app_frameworks": uid("app_frameworks"),
+    "app_resources": uid("app_resources"),
+    "project_config_list": uid("project_config_list"),
+    "framework_config_list": uid("framework_config_list"),
+    "app_config_list": uid("app_config_list"),
+    "project_debug": uid("project_debug"),
+    "project_release": uid("project_release"),
+    "framework_debug": uid("framework_debug"),
+    "framework_release": uid("framework_release"),
+    "app_debug": uid("app_debug"),
+    "app_release": uid("app_release"),
+    "framework_dep": uid("framework_dep"),
+    "embed_phase": uid("embed_phase"),
+    "copy_framework": uid("copy_framework"),
+    "test_target": uid("test_target"),
+    "test_product": uid("test_product"),
+    "test_group": uid("test_group"),
+    "test_sources": uid("test_sources"),
+    "test_frameworks": uid("test_frameworks"),
+    "test_resources": uid("test_resources"),
+    "test_dep": uid("test_dep"),
+    "test_target_dep": uid("test_target_dep"),
+    "test_config_list": uid("test_config_list"),
+    "test_debug": uid("test_debug"),
+    "test_release": uid("test_release"),
 }
 
 framework_files = [
@@ -58,18 +75,21 @@ framework_files = [
 
 header_name = "StructuredNotesDesk.h"
 
-file_ids = {name: uid() for name in framework_files}
-file_ids[header_name] = uid()
-file_ids["StructuredNotesDeskApp.swift"] = uid()
-file_ids["Info.plist"] = uid()
+file_ids = {name: uid(f"file:{name}") for name in framework_files}
+file_ids[header_name] = uid(f"file:{header_name}")
+file_ids["StructuredNotesDeskApp.swift"] = uid("file:StructuredNotesDeskApp.swift")
+file_ids["Info.plist"] = uid("file:Info.plist")
+file_ids["EngineGoldenTests.swift"] = uid("file:EngineGoldenTests.swift")
 
 # Build file IDs (PBXBuildFile)
-bf = {name: uid() for name in framework_files}
-bf["app_main"] = uid()
-bf["link_framework"] = uid()
-bf["embed_framework"] = uid()
-bf["header"] = uid()
-bf["assets"] = uid()
+bf = {name: uid(f"bf:{name}") for name in framework_files}
+bf["app_main"] = uid("bf:app_main")
+bf["link_framework"] = uid("bf:link_framework")
+bf["embed_framework"] = uid("bf:embed_framework")
+bf["header"] = uid("bf:header")
+bf["assets"] = uid("bf:assets")
+bf["test_main"] = uid("bf:test_main")
+bf["test_link_framework"] = uid("bf:test_link_framework")
 
 framework_build_files = "\n".join(
     f"\t\t{bf[n]} /* {n} in Sources */ = {{isa = PBXBuildFile; fileRef = {file_ids[n]} /* {n} */; }};"
@@ -101,10 +121,19 @@ pbxproj = f'''// !$*UTF8*$!
 		{bf["link_framework"]} /* StructuredNotesDesk.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {IDS["framework_product"]} /* StructuredNotesDesk.framework */; }};
 		{bf["embed_framework"]} /* StructuredNotesDesk.framework in Embed Frameworks */ = {{isa = PBXBuildFile; fileRef = {IDS["framework_product"]} /* StructuredNotesDesk.framework */; settings = {{ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }}; }};
 		{bf["assets"]} /* Assets.xcassets in Resources */ = {{isa = PBXBuildFile; fileRef = {IDS["assets_ref"]} /* Assets.xcassets */; }};
+		{bf["test_main"]} /* EngineGoldenTests.swift in Sources */ = {{isa = PBXBuildFile; fileRef = {file_ids["EngineGoldenTests.swift"]} /* EngineGoldenTests.swift */; }};
+		{bf["test_link_framework"]} /* StructuredNotesDesk.framework in Frameworks */ = {{isa = PBXBuildFile; fileRef = {IDS["framework_product"]} /* StructuredNotesDesk.framework */; }};
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		{IDS["framework_dep"]} /* PBXContainerItemProxy */ = {{
+			isa = PBXContainerItemProxy;
+			containerPortal = {IDS["project"]} /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = {IDS["framework_target"]};
+			remoteInfo = StructuredNotesDesk;
+		}};
+		{IDS["test_dep"]} /* PBXContainerItemProxy */ = {{
 			isa = PBXContainerItemProxy;
 			containerPortal = {IDS["project"]} /* Project object */;
 			proxyType = 1;
@@ -134,6 +163,8 @@ pbxproj = f'''// !$*UTF8*$!
 		{IDS["assets_ref"]} /* Assets.xcassets */ = {{isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; }};
 		{IDS["framework_product"]} /* StructuredNotesDesk.framework */ = {{isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = StructuredNotesDesk.framework; sourceTree = BUILT_PRODUCTS_DIR; }};
 		{IDS["app_product"]} /* StructuredNotesDeskExample.app */ = {{isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = StructuredNotesDeskExample.app; sourceTree = BUILT_PRODUCTS_DIR; }};
+		{file_ids["EngineGoldenTests.swift"]} /* EngineGoldenTests.swift */ = {{isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EngineGoldenTests.swift; sourceTree = "<group>"; }};
+		{IDS["test_product"]} /* StructuredNotesDeskTests.xctest */ = {{isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = StructuredNotesDeskTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; }};
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -152,6 +183,14 @@ pbxproj = f'''// !$*UTF8*$!
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
+		{IDS["test_frameworks"]} /* Frameworks */ = {{
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				{bf["test_link_framework"]} /* StructuredNotesDesk.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -160,6 +199,7 @@ pbxproj = f'''// !$*UTF8*$!
 			children = (
 				{IDS["framework_group"]} /* StructuredNotesDesk */,
 				{IDS["example_group"]} /* Example */,
+				{IDS["test_group"]} /* Tests */,
 				{IDS["products_group"]} /* Products */,
 			);
 			sourceTree = "<group>";
@@ -188,8 +228,17 @@ pbxproj = f'''// !$*UTF8*$!
 			children = (
 				{IDS["framework_product"]} /* StructuredNotesDesk.framework */,
 				{IDS["app_product"]} /* StructuredNotesDeskExample.app */,
+				{IDS["test_product"]} /* StructuredNotesDeskTests.xctest */,
 			);
 			name = Products;
+			sourceTree = "<group>";
+		}};
+		{IDS["test_group"]} /* Tests */ = {{
+			isa = PBXGroup;
+			children = (
+				{file_ids["EngineGoldenTests.swift"]} /* EngineGoldenTests.swift */,
+			);
+			path = Tests/StructuredNotesDeskTests;
 			sourceTree = "<group>";
 		}};
 /* End PBXGroup section */
@@ -243,6 +292,24 @@ pbxproj = f'''// !$*UTF8*$!
 			productReference = {IDS["app_product"]} /* StructuredNotesDeskExample.app */;
 			productType = "com.apple.product-type.application";
 		}};
+		{IDS["test_target"]} /* StructuredNotesDeskTests */ = {{
+			isa = PBXNativeTarget;
+			buildConfigurationList = {IDS["test_config_list"]} /* Build configuration list for PBXNativeTarget "StructuredNotesDeskTests" */;
+			buildPhases = (
+				{IDS["test_sources"]} /* Sources */,
+				{IDS["test_frameworks"]} /* Frameworks */,
+				{IDS["test_resources"]} /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				{IDS["test_target_dep"]} /* PBXTargetDependency */,
+			);
+			name = StructuredNotesDeskTests;
+			productName = StructuredNotesDeskTests;
+			productReference = {IDS["test_product"]} /* StructuredNotesDeskTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		}};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -257,6 +324,9 @@ pbxproj = f'''// !$*UTF8*$!
 						CreatedOnToolsVersion = 26.0;
 					}};
 					{IDS["app_target"]} = {{
+						CreatedOnToolsVersion = 26.0;
+					}};
+					{IDS["test_target"]} = {{
 						CreatedOnToolsVersion = 26.0;
 					}};
 				}};
@@ -276,6 +346,7 @@ pbxproj = f'''// !$*UTF8*$!
 			targets = (
 				{IDS["framework_target"]} /* StructuredNotesDesk */,
 				{IDS["app_target"]} /* StructuredNotesDeskExample */,
+				{IDS["test_target"]} /* StructuredNotesDeskTests */,
 			);
 		}};
 /* End PBXProject section */
@@ -293,6 +364,13 @@ pbxproj = f'''// !$*UTF8*$!
 			buildActionMask = 2147483647;
 			files = (
 				{bf["assets"]} /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
+		{IDS["test_resources"]} /* Resources */ = {{
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
@@ -315,6 +393,14 @@ pbxproj = f'''// !$*UTF8*$!
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		}};
+		{IDS["test_sources"]} /* Sources */ = {{
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				{bf["test_main"]} /* EngineGoldenTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		}};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -322,6 +408,11 @@ pbxproj = f'''// !$*UTF8*$!
 			isa = PBXTargetDependency;
 			target = {IDS["framework_target"]} /* StructuredNotesDesk */;
 			targetProxy = {IDS["framework_dep"]} /* PBXContainerItemProxy */;
+		}};
+		{IDS["test_target_dep"]} /* PBXTargetDependency */ = {{
+			isa = PBXTargetDependency;
+			target = {IDS["framework_target"]} /* StructuredNotesDesk */;
+			targetProxy = {IDS["test_dep"]} /* PBXContainerItemProxy */;
 		}};
 /* End PBXTargetDependency section */
 
@@ -493,6 +584,50 @@ pbxproj = f'''// !$*UTF8*$!
 			}};
 			name = Release;
 		}};
+		{IDS["test_debug"]} /* Debug */ = {{
+			isa = XCBuildConfiguration;
+			buildSettings = {{
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDeskTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			}};
+			name = Debug;
+		}};
+		{IDS["test_release"]} /* Release */ = {{
+			isa = XCBuildConfiguration;
+			buildSettings = {{
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.structurednotes.StructuredNotesDeskTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SUPPORTS_MACCATALYST = NO;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			}};
+			name = Release;
+		}};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -519,6 +654,15 @@ pbxproj = f'''// !$*UTF8*$!
 			buildConfigurations = (
 				{IDS["app_debug"]} /* Debug */,
 				{IDS["app_release"]} /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		}};
+		{IDS["test_config_list"]} /* Build configuration list for PBXNativeTarget "StructuredNotesDeskTests" */ = {{
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				{IDS["test_debug"]} /* Debug */,
+				{IDS["test_release"]} /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
